@@ -55,7 +55,7 @@ func checkIfVerifiedBuyer(userID, productID string) bool {
 	return false
 }
 
-// CreateReview registers a user review and checks verified buyer status
+// CreateReview registers a user review (with optional photos) and checks verified buyer status
 func CreateReview(c *gin.Context) {
 	var req models.CreateReviewRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -63,36 +63,71 @@ func CreateReview(c *gin.Context) {
 		return
 	}
 
-	isVerified := checkIfVerifiedBuyer(req.UserID, req.ProductID)
+	targetID := req.ProductID
+	if targetID == "" {
+		targetID = req.PropertyID
+	}
+	if targetID == "" {
+		targetID = req.HotelID
+	}
+	if targetID == "" {
+		targetID = req.ResourceID
+	}
+	if targetID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Debes enviar 'product_id', 'property_id' o 'hotel_id'"})
+		return
+	}
+
+	title := req.Title
+	if title == "" {
+		title = "Reseña de Huésped / Cliente"
+	}
+
+	photos := req.Photos
+	if len(photos) == 0 && len(req.Images) > 0 {
+		photos = req.Images
+	}
+	if photos == nil {
+		photos = []string{}
+	}
+	photosBytes, _ := json.Marshal(photos)
+
+	isVerified := checkIfVerifiedBuyer(req.UserID, targetID)
 
 	var newID string
 	now := time.Now()
 	err := config.DB.QueryRow(`
-		INSERT INTO reviews (product_id, user_id, rating, title, comment, is_verified_buyer, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO reviews (product_id, user_id, rating, title, comment, photos_json, is_verified_buyer, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id`,
-		req.ProductID, req.UserID, req.Rating, req.Title, req.Comment, isVerified, now,
+		targetID, req.UserID, req.Rating, title, req.Comment, string(photosBytes), isVerified, now,
 	).Scan(&newID)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error al guardar la reseña"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error al guardar la reseña", "details": err.Error()})
 		return
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"message":           "Reseña publicada exitosamente",
+		"message":           "Reseña y fotos publicadas exitosamente",
 		"review_id":         newID,
-		"is_verified_buyer": isVerified,
+		"product_id":        targetID,
+		"user_id":           req.UserID,
 		"rating":            req.Rating,
+		"title":             title,
+		"comment":           req.Comment,
+		"photos":            photos,
+		"is_verified_buyer": isVerified,
+		"created_at":        now,
 	})
 }
 
-// GetProductReviews returns reviews, average rating and breakdown
+// GetProductReviews returns reviews (including photos), average rating and breakdown
 func GetProductReviews(c *gin.Context) {
 	productID := c.Param("productId")
 
 	rows, err := config.DB.Query(`
-		SELECT id, product_id, user_id, rating, title, comment, is_verified_buyer, created_at
+		SELECT id, product_id, user_id, rating, title, comment, COALESCE(photos_json, '[]'), is_verified_buyer, created_at
 		FROM reviews
 		WHERE product_id = $1
 		ORDER BY created_at DESC`,
@@ -110,7 +145,12 @@ func GetProductReviews(c *gin.Context) {
 
 	for rows.Next() {
 		var r models.Review
-		if err := rows.Scan(&r.ID, &r.ProductID, &r.UserID, &r.Rating, &r.Title, &r.Comment, &r.IsVerifiedBuyer, &r.CreatedAt); err == nil {
+		var photosJSON string
+		if err := rows.Scan(&r.ID, &r.ProductID, &r.UserID, &r.Rating, &r.Title, &r.Comment, &photosJSON, &r.IsVerifiedBuyer, &r.CreatedAt); err == nil {
+			_ = json.Unmarshal([]byte(photosJSON), &r.Photos)
+			if r.Photos == nil {
+				r.Photos = []string{}
+			}
 			reviews = append(reviews, r)
 			totalRating += r.Rating
 			breakdown[r.Rating]++

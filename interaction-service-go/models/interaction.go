@@ -4,11 +4,16 @@ import "time"
 
 // Review models
 type CreateReviewRequest struct {
-	ProductID string `json:"product_id" binding:"required"`
-	UserID    string `json:"user_id" binding:"required"`
-	Rating    int    `json:"rating" binding:"required,min=1,max=5"`
-	Title     string `json:"title" binding:"required"`
-	Comment   string `json:"comment" binding:"required"`
+	ProductID  string   `json:"product_id"`
+	PropertyID string   `json:"property_id"` // Alias para sistema de hoteles/Airbnb
+	HotelID    string   `json:"hotel_id"`    // Alias para sistema de hoteles/Airbnb
+	ResourceID string   `json:"resource_id"` // Alias para recursos reservables
+	UserID     string   `json:"user_id" binding:"required"`
+	Rating     int      `json:"rating" binding:"required,min=1,max=5"`
+	Title      string   `json:"title"`
+	Comment    string   `json:"comment" binding:"required"`
+	Photos     []string `json:"photos,omitempty"`
+	Images     []string `json:"images,omitempty"`
 }
 
 type Review struct {
@@ -18,6 +23,7 @@ type Review struct {
 	Rating          int       `json:"rating"`
 	Title           string    `json:"title"`
 	Comment         string    `json:"comment"`
+	Photos          []string  `json:"photos"`
 	IsVerifiedBuyer bool      `json:"is_verified_buyer"`
 	CreatedAt       time.Time `json:"created_at"`
 }

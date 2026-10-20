@@ -36,9 +36,12 @@ func ConnectDB() {
 		rating INT NOT NULL CHECK (rating >= 1 AND rating <= 5),
 		title VARCHAR(200) NOT NULL,
 		comment TEXT NOT NULL,
+		photos_json TEXT DEFAULT '[]',
 		is_verified_buyer BOOLEAN DEFAULT false,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
+
+	ALTER TABLE reviews ADD COLUMN IF NOT EXISTS photos_json TEXT DEFAULT '[]';
 
 	CREATE TABLE IF NOT EXISTS wishlists (
 		id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
