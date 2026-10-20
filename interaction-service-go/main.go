@@ -29,10 +29,9 @@ func main() {
 
 	api := r.Group("/api/interactions")
 	{
-		// Reseñas y calificaciones (con soporte de fotos)
+		// Reseñas y calificaciones
 		api.POST("/reviews", controllers.CreateReview)
 		api.GET("/reviews/product/:productId", controllers.GetProductReviews)
-		api.GET("/reviews/:productId", controllers.GetProductReviews)
 
 		// Listas de deseos (Wishlists)
 		api.POST("/wishlists", controllers.CreateWishlist)

@@ -55,7 +55,7 @@ func checkIfVerifiedBuyer(userID, productID string) bool {
 	return false
 }
 
-// CreateReview registers a user review (with optional photos) and checks verified buyer status
+// CreateReview registers a user review and checks verified buyer status
 func CreateReview(c *gin.Context) {
 	var req models.CreateReviewRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -63,71 +63,36 @@ func CreateReview(c *gin.Context) {
 		return
 	}
 
-	targetID := req.ProductID
-	if targetID == "" {
-		targetID = req.PropertyID
-	}
-	if targetID == "" {
-		targetID = req.HotelID
-	}
-	if targetID == "" {
-		targetID = req.ResourceID
-	}
-	if targetID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Debes enviar 'product_id', 'property_id' o 'hotel_id'"})
-		return
-	}
-
-	title := req.Title
-	if title == "" {
-		title = "Reseña de Huésped / Cliente"
-	}
-
-	photos := req.Photos
-	if len(photos) == 0 && len(req.Images) > 0 {
-		photos = req.Images
-	}
-	if photos == nil {
-		photos = []string{}
-	}
-	photosBytes, _ := json.Marshal(photos)
-
-	isVerified := checkIfVerifiedBuyer(req.UserID, targetID)
+	isVerified := checkIfVerifiedBuyer(req.UserID, req.ProductID)
 
 	var newID string
 	now := time.Now()
 	err := config.DB.QueryRow(`
-		INSERT INTO reviews (product_id, user_id, rating, title, comment, photos_json, is_verified_buyer, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO reviews (product_id, user_id, rating, title, comment, is_verified_buyer, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id`,
-		targetID, req.UserID, req.Rating, title, req.Comment, string(photosBytes), isVerified, now,
+		req.ProductID, req.UserID, req.Rating, req.Title, req.Comment, isVerified, now,
 	).Scan(&newID)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error al guardar la reseña", "details": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error al guardar la reseña"})
 		return
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"message":           "Reseña y fotos publicadas exitosamente",
+		"message":           "Reseña publicada exitosamente",
 		"review_id":         newID,
-		"product_id":        targetID,
-		"user_id":           req.UserID,
-		"rating":            req.Rating,
-		"title":             title,
-		"comment":           req.Comment,
-		"photos":            photos,
 		"is_verified_buyer": isVerified,
-		"created_at":        now,
+		"rating":            req.Rating,
 	})
 }
 
-// GetProductReviews returns reviews (including photos), average rating and breakdown
+// GetProductReviews returns reviews, average rating and breakdown
 func GetProductReviews(c *gin.Context) {
 	productID := c.Param("productId")
 
 	rows, err := config.DB.Query(`
-		SELECT id, product_id, user_id, rating, title, comment, COALESCE(photos_json, '[]'), is_verified_buyer, created_at
+		SELECT id, product_id, user_id, rating, title, comment, is_verified_buyer, created_at
 		FROM reviews
 		WHERE product_id = $1
 		ORDER BY created_at DESC`,
@@ -145,12 +110,7 @@ func GetProductReviews(c *gin.Context) {
 
 	for rows.Next() {
 		var r models.Review
-		var photosJSON string
-		if err := rows.Scan(&r.ID, &r.ProductID, &r.UserID, &r.Rating, &r.Title, &r.Comment, &photosJSON, &r.IsVerifiedBuyer, &r.CreatedAt); err == nil {
-			_ = json.Unmarshal([]byte(photosJSON), &r.Photos)
-			if r.Photos == nil {
-				r.Photos = []string{}
-			}
+		if err := rows.Scan(&r.ID, &r.ProductID, &r.UserID, &r.Rating, &r.Title, &r.Comment, &r.IsVerifiedBuyer, &r.CreatedAt); err == nil {
 			reviews = append(reviews, r)
 			totalRating += r.Rating
 			breakdown[r.Rating]++
@@ -344,40 +304,19 @@ func SendEmailNotification(c *gin.Context) {
 	subject := "Notificación de Tienda"
 	body := ""
 
-	refID := req.OrderNumber
-	if refID == "" {
-		refID = req.ReservationID
-	}
-
 	switch req.Type {
 	case "ORDER_CONFIRMATION":
-		subject = fmt.Sprintf("¡Confirmación de Compra! Pedido #%s", refID)
-		body = fmt.Sprintf("Hola! Tu pedido con número %s por un total de $%.2f ha sido procesado exitosamente. Estamos preparando tus artículos.", refID, req.Total)
+		subject = fmt.Sprintf("¡Confirmación de Compra! Pedido #%s", req.OrderNumber)
+		body = fmt.Sprintf("Hola! Tu pedido con número %s por un total de $%.2f ha sido procesado exitosamente. Estamos preparando tus artículos.", req.OrderNumber, req.Total)
 	case "ORDER_SHIPPED":
-		subject = fmt.Sprintf("¡Tu pedido #%s va en camino!", refID)
-		body = fmt.Sprintf("Tu orden %s ha sido despachada con la paquetería %s. Tu número de guía para rastreo es: %s.", refID, req.Carrier, req.TrackingNumber)
+		subject = fmt.Sprintf("¡Tu pedido #%s va en camino!", req.OrderNumber)
+		body = fmt.Sprintf("Tu orden %s ha sido despachada con la paquetería %s. Tu número de guía para rastreo es: %s.", req.OrderNumber, req.Carrier, req.TrackingNumber)
 	case "ORDER_DELIVERED":
-		subject = fmt.Sprintf("Tu paquete #%s ha sido entregado", refID)
+		subject = fmt.Sprintf("Tu paquete #%s ha sido entregado", req.OrderNumber)
 		body = fmt.Sprintf("Tu envío con guía %s ha sido entregado en tu dirección. ¡Esperamos que disfrutes tus productos!", req.TrackingNumber)
-	case "RESERVATION_CONFIRMATION":
-		subject = fmt.Sprintf("¡Reservación Confirmada! Folio #%s", refID)
-		body = fmt.Sprintf("Tu reservación #%s ha sido confirmada exitosamente (Monto registrado: $%.2f).", refID, req.Total)
-	case "RESERVATION_REMINDER":
-		subject = fmt.Sprintf("Recordatorio de tu Reservación #%s", refID)
-		body = fmt.Sprintf("Te recordamos que tu reservación #%s está próxima. ¡Te esperamos!", refID)
-	case "RESERVATION_CANCELLED":
-		subject = fmt.Sprintf("Cancelación de Reservación #%s", refID)
-		body = fmt.Sprintf("Tu reservación #%s ha sido cancelada conforme a tu solicitud.", refID)
 	default:
-		subject = "Notificación del Sistema"
+		subject = "Actualización de tu cuenta"
 		body = "Tienes una nueva notificación en tu cuenta."
-	}
-
-	if req.Subject != "" {
-		subject = req.Subject
-	}
-	if req.Message != "" {
-		body = req.Message
 	}
 
 	now := time.Now()

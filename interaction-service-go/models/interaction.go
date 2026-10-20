@@ -4,16 +4,11 @@ import "time"
 
 // Review models
 type CreateReviewRequest struct {
-	ProductID  string   `json:"product_id"`
-	PropertyID string   `json:"property_id"` // Alias para sistema de hoteles/Airbnb
-	HotelID    string   `json:"hotel_id"`    // Alias para sistema de hoteles/Airbnb
-	ResourceID string   `json:"resource_id"` // Alias para recursos reservables
-	UserID     string   `json:"user_id" binding:"required"`
-	Rating     int      `json:"rating" binding:"required,min=1,max=5"`
-	Title      string   `json:"title"`
-	Comment    string   `json:"comment" binding:"required"`
-	Photos     []string `json:"photos,omitempty"`
-	Images     []string `json:"images,omitempty"`
+	ProductID string `json:"product_id" binding:"required"`
+	UserID    string `json:"user_id" binding:"required"`
+	Rating    int    `json:"rating" binding:"required,min=1,max=5"`
+	Title     string `json:"title" binding:"required"`
+	Comment   string `json:"comment" binding:"required"`
 }
 
 type Review struct {
@@ -23,7 +18,6 @@ type Review struct {
 	Rating          int       `json:"rating"`
 	Title           string    `json:"title"`
 	Comment         string    `json:"comment"`
-	Photos          []string  `json:"photos"`
 	IsVerifiedBuyer bool      `json:"is_verified_buyer"`
 	CreatedAt       time.Time `json:"created_at"`
 }
@@ -70,11 +64,8 @@ type WishlistItem struct {
 type SendEmailNotificationRequest struct {
 	UserID         string  `json:"user_id" binding:"required"`
 	RecipientEmail string  `json:"recipient_email,omitempty"`
-	Type           string  `json:"type" binding:"required"` // 'ORDER_CONFIRMATION', 'ORDER_SHIPPED', 'ORDER_DELIVERED', 'RESERVATION_CONFIRMATION', 'RESERVATION_REMINDER', 'RESERVATION_CANCELLED'
+	Type           string  `json:"type" binding:"required"` // 'ORDER_CONFIRMATION', 'ORDER_SHIPPED', 'ORDER_DELIVERED'
 	OrderNumber    string  `json:"order_number,omitempty"`
-	ReservationID  string  `json:"reservation_id,omitempty"`
-	Subject        string  `json:"subject,omitempty"`
-	Message        string  `json:"message,omitempty"`
 	TrackingNumber string  `json:"tracking_number,omitempty"`
 	Carrier        string  `json:"carrier,omitempty"`
 	Total          float64 `json:"total,omitempty"`
