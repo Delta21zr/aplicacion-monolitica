@@ -1,0 +1,2 @@
+.\start-all.ps1
+go run runner.go

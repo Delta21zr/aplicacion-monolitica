@@ -1,0 +1,19 @@
+{
+  "name": "user-service",
+  "version": "1.0.0",
+  "description": "Servicio de Usuarios para la tienda en línea",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "nodemon src/app.js"
+  },
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.11.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}

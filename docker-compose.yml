@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  # Base de Datos Relacional (PostgreSQL)
+  postgres:
+    image: postgres:15-alpine
+    container_name: monolito-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: user_service_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # Base de Datos de Documentos (MongoDB para Catálogo)
+  mongodb:
+    image: mongo:6-jammy
+    container_name: monolito-mongo
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  # Base de Datos en Memoria (Redis para Carrito)
+  redis:
+    image: redis:7-alpine
+    container_name: monolito-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  mongo_data:
+  redis_data:
