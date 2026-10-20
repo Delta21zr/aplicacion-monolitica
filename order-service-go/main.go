@@ -36,6 +36,12 @@ func main() {
 		api.PUT("/:orderId/status", controllers.UpdateOrderStatus)
 	}
 
+	payments := r.Group("/api/payments")
+	{
+		payments.POST("/charge", controllers.DirectCharge)
+		payments.POST("/refund", controllers.RefundPayment)
+	}
+
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "OK", "service": "Order & Payments Service"})
 	})

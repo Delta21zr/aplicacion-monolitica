@@ -304,19 +304,40 @@ func SendEmailNotification(c *gin.Context) {
 	subject := "Notificación de Tienda"
 	body := ""
 
+	refID := req.OrderNumber
+	if refID == "" {
+		refID = req.ReservationID
+	}
+
 	switch req.Type {
 	case "ORDER_CONFIRMATION":
-		subject = fmt.Sprintf("¡Confirmación de Compra! Pedido #%s", req.OrderNumber)
-		body = fmt.Sprintf("Hola! Tu pedido con número %s por un total de $%.2f ha sido procesado exitosamente. Estamos preparando tus artículos.", req.OrderNumber, req.Total)
+		subject = fmt.Sprintf("¡Confirmación de Compra! Pedido #%s", refID)
+		body = fmt.Sprintf("Hola! Tu pedido con número %s por un total de $%.2f ha sido procesado exitosamente. Estamos preparando tus artículos.", refID, req.Total)
 	case "ORDER_SHIPPED":
-		subject = fmt.Sprintf("¡Tu pedido #%s va en camino!", req.OrderNumber)
-		body = fmt.Sprintf("Tu orden %s ha sido despachada con la paquetería %s. Tu número de guía para rastreo es: %s.", req.OrderNumber, req.Carrier, req.TrackingNumber)
+		subject = fmt.Sprintf("¡Tu pedido #%s va en camino!", refID)
+		body = fmt.Sprintf("Tu orden %s ha sido despachada con la paquetería %s. Tu número de guía para rastreo es: %s.", refID, req.Carrier, req.TrackingNumber)
 	case "ORDER_DELIVERED":
-		subject = fmt.Sprintf("Tu paquete #%s ha sido entregado", req.OrderNumber)
+		subject = fmt.Sprintf("Tu paquete #%s ha sido entregado", refID)
 		body = fmt.Sprintf("Tu envío con guía %s ha sido entregado en tu dirección. ¡Esperamos que disfrutes tus productos!", req.TrackingNumber)
+	case "RESERVATION_CONFIRMATION":
+		subject = fmt.Sprintf("¡Reservación Confirmada! Folio #%s", refID)
+		body = fmt.Sprintf("Tu reservación #%s ha sido confirmada exitosamente (Monto registrado: $%.2f).", refID, req.Total)
+	case "RESERVATION_REMINDER":
+		subject = fmt.Sprintf("Recordatorio de tu Reservación #%s", refID)
+		body = fmt.Sprintf("Te recordamos que tu reservación #%s está próxima. ¡Te esperamos!", refID)
+	case "RESERVATION_CANCELLED":
+		subject = fmt.Sprintf("Cancelación de Reservación #%s", refID)
+		body = fmt.Sprintf("Tu reservación #%s ha sido cancelada conforme a tu solicitud.", refID)
 	default:
-		subject = "Actualización de tu cuenta"
+		subject = "Notificación del Sistema"
 		body = "Tienes una nueva notificación en tu cuenta."
+	}
+
+	if req.Subject != "" {
+		subject = req.Subject
+	}
+	if req.Message != "" {
+		body = req.Message
 	}
 
 	now := time.Now()

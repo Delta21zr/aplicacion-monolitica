@@ -8,6 +8,7 @@ Write-Host " 🚀 INICIADOR GLOBAL DE MICROSERVICIOS Y FRONTEND (MONOLITO) 🚀 
 Write-Host "==================================================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Microservicios que se iniciarán:" -ForegroundColor White
+Write-Host " - API Gateway (Ngrok) -> http://localhost:8080" -ForegroundColor White
 Write-Host " - User Service        -> http://localhost:3002" -ForegroundColor DarkCyan
 Write-Host " - Catalog Service     -> http://localhost:8081" -ForegroundColor Green
 Write-Host " - Inventory Service   -> http://localhost:8082" -ForegroundColor Yellow

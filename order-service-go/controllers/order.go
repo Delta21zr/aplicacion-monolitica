@@ -51,23 +51,48 @@ func Checkout(c *gin.Context) {
 	}
 
 	// 1. Obtener carrito desde cart-service (localhost:8083)
+	var cart models.CartResponse
+	isDirectExternalCharge := false
+
 	cartURL := fmt.Sprintf("http://localhost:8083/api/cart/%s", req.UserID)
 	resp, err := http.Get(cartURL)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No se pudo consultar el carrito del usuario o servicio no disponible"})
-		return
-	}
-	defer resp.Body.Close()
-
-	var cart models.CartResponse
-	if err := json.NewDecoder(resp.Body).Decode(&cart); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error procesando datos del carrito"})
-		return
+	if err == nil && resp.StatusCode == http.StatusOK {
+		json.NewDecoder(resp.Body).Decode(&cart)
+		resp.Body.Close()
 	}
 
+	// Si el carrito está vacío pero enviaron un monto directo (ej. Reservaciones externas)
 	if len(cart.Items) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "El carrito está vacío. Agrega productos antes de finalizar la compra."})
-		return
+		if req.Amount > 0 {
+			isDirectExternalCharge = true
+			concept := req.Concept
+			if concept == "" {
+				concept = req.ShippingAddress
+			}
+			if concept == "" {
+				concept = "Cobro Externo / Reservación"
+			}
+			sub := req.Amount / 1.16
+			iva := req.Amount - sub
+			cart = models.CartResponse{
+				UserID:   req.UserID,
+				Subtotal: sub,
+				IVA:      iva,
+				Discount: 0,
+				Total:    req.Amount,
+				Items: []models.CartItemData{
+					{
+						ProductID: "EXT-RES",
+						Name:      concept,
+						Quantity:  1,
+						Price:     req.Amount,
+					},
+				},
+			}
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "El carrito está vacío. Agrega productos antes de finalizar la compra o envía 'amount' para cobro directo."})
+			return
+		}
 	}
 
 	// 2. Procesar pago (Tarjeta / PayPal / etc.)
@@ -91,23 +116,25 @@ func Checkout(c *gin.Context) {
 		txnRef = fmt.Sprintf("TXN-CARD-%d-%s", time.Now().Unix(), cardLastFour)
 	}
 
-	// 3. Descontar stock en inventory-service (localhost:8082)
-	for _, item := range cart.Items {
-		invUpdate := map[string]interface{}{
-			"productId": item.ProductID,
-			"quantity":  -item.Quantity, // Cantidad negativa para descontar
+	// 3. Descontar stock en inventory-service (localhost:8082) solo si son productos de tienda
+	if !isDirectExternalCharge {
+		for _, item := range cart.Items {
+			invUpdate := map[string]interface{}{
+				"productId": item.ProductID,
+				"quantity":  -item.Quantity, // Cantidad negativa para descontar
+			}
+			payloadBytes, _ := json.Marshal(invUpdate)
+			invResp, invErr := http.Post("http://localhost:8082/api/inventory/update", "application/json", bytes.NewBuffer(payloadBytes))
+			if invErr != nil || invResp.StatusCode != http.StatusOK {
+				// Si falla por falta de stock (ej. 409 Conflict)
+				c.JSON(http.StatusConflict, gin.H{
+					"error":   fmt.Sprintf("Stock insuficiente para el producto '%s' (%s)", item.Name, item.ProductID),
+					"product": item.ProductID,
+				})
+				return
+			}
+			invResp.Body.Close()
 		}
-		payloadBytes, _ := json.Marshal(invUpdate)
-		invResp, invErr := http.Post("http://localhost:8082/api/inventory/update", "application/json", bytes.NewBuffer(payloadBytes))
-		if invErr != nil || invResp.StatusCode != http.StatusOK {
-			// Si falla por falta de stock (ej. 409 Conflict)
-			c.JSON(http.StatusConflict, gin.H{
-				"error":   fmt.Sprintf("Stock insuficiente para el producto '%s' (%s)", item.Name, item.ProductID),
-				"product": item.ProductID,
-			})
-			return
-		}
-		invResp.Body.Close()
 	}
 
 	// 4. Generar identificadores y firma criptográfica
@@ -368,4 +395,183 @@ func UpdateOrderStatus(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Estado de orden actualizado", "new_status": req.Status})
+}
+
+// DirectCharge processes a direct payment (anticipo o total) for external reservations or services
+func DirectCharge(c *gin.Context) {
+	var req models.DirectChargeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Datos de pago inválidos", "details": err.Error()})
+		return
+	}
+
+	if req.Amount <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "El monto a cobrar debe ser mayor a 0"})
+		return
+	}
+
+	gateway := strings.ToUpper(req.PaymentMethod)
+	var txnRef, cardLastFour string
+	if gateway == "PAYPAL" {
+		if req.PayPalOrderID == "" {
+			req.PayPalOrderID = fmt.Sprintf("PAYID-%d", rand.Intn(900000)+100000)
+		}
+		txnRef = fmt.Sprintf("TXN-PAYPAL-%s", req.PayPalOrderID)
+	} else {
+		gateway = "CREDIT_CARD"
+		if req.CardDetails != nil && len(req.CardDetails.CardNumber) >= 4 {
+			num := req.CardDetails.CardNumber
+			cardLastFour = num[len(num)-4:]
+		} else {
+			cardLastFour = "4242"
+		}
+		txnRef = fmt.Sprintf("TXN-CARD-%d-%s", time.Now().Unix(), cardLastFour)
+	}
+
+	concept := req.Concept
+	if concept == "" {
+		if req.ReservationID != "" {
+			concept = fmt.Sprintf("Reservación #%s (%s)", req.ReservationID, req.PaymentType)
+		} else {
+			concept = "Cobro de Reservación"
+		}
+	}
+
+	orderNum := generateOrderNumber()
+	now := time.Now()
+	cryptoSig := generateCryptoSignature(orderNum, req.UserID, req.Amount, now.Unix())
+	sub := req.Amount / 1.16
+	iva := req.Amount - sub
+
+	tx, err := config.DB.Begin()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error iniciando transacción"})
+		return
+	}
+	defer tx.Rollback()
+
+	var orderID string
+	err = tx.QueryRow(`
+		INSERT INTO orders (order_number, user_id, subtotal, discount, iva, total, status, payment_status, payment_method, shipping_address, crypto_signature, created_at)
+		VALUES ($1, $2, $3, 0, $4, $5, 'PAID', 'COMPLETED', $6, $7, $8, $9)
+		RETURNING id`,
+		orderNum, req.UserID, sub, iva, req.Amount, gateway, concept, cryptoSig, now,
+	).Scan(&orderID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error al registrar la orden de pago"})
+		return
+	}
+
+	var paymentID string
+	err = tx.QueryRow(`
+		INSERT INTO payments (order_id, user_id, payment_gateway, transaction_ref, amount, status, card_last_four, created_at)
+		VALUES ($1, $2, $3, $4, $5, 'SUCCESS', $6, $7)
+		RETURNING id`,
+		orderID, req.UserID, gateway, txnRef, req.Amount, cardLastFour, now,
+	).Scan(&paymentID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error al registrar la transacción"})
+		return
+	}
+
+	receiptNum := generateReceiptNumber()
+	receiptContent := map[string]interface{}{
+		"receipt_number":  receiptNum,
+		"order_number":    orderNum,
+		"reservation_id":  req.ReservationID,
+		"concept":         concept,
+		"payment_type":    req.PaymentType,
+		"user_id":         req.UserID,
+		"issued_at":       now.Format(time.RFC3339),
+		"total":           req.Amount,
+		"payment_gateway": gateway,
+		"transaction_ref": txnRef,
+	}
+	receiptJSONBytes, _ := json.Marshal(receiptContent)
+	receiptHash := fmt.Sprintf("%x", sha256.Sum256(receiptJSONBytes))
+
+	_, err = tx.Exec(`
+		INSERT INTO receipts (order_id, receipt_number, content_json, crypto_hash, issued_at)
+		VALUES ($1, $2, $3, $4, $5)`,
+		orderID, receiptNum, string(receiptJSONBytes), receiptHash, now,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error al emitir recibo"})
+		return
+	}
+
+	tx.Commit()
+
+	// Notificar asíncronamente al servicio de Notificaciones (:8086)
+	go func() {
+		notifPayload := map[string]interface{}{
+			"user_id":         req.UserID,
+			"recipient_email": req.RecipientEmail,
+			"type":            "ORDER_CONFIRMATION",
+			"order_number":    orderNum,
+			"total":           req.Amount,
+		}
+		bodyBytes, _ := json.Marshal(notifPayload)
+		http.Post("http://localhost:8086/api/interactions/notifications/email", "application/json", bytes.NewBuffer(bodyBytes))
+	}()
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message":          "Pago procesado y aprobado exitosamente",
+		"payment_id":       paymentID,
+		"order_id":         orderID,
+		"order_number":     orderNum,
+		"reservation_id":   req.ReservationID,
+		"receipt_number":   receiptNum,
+		"transaction_ref":  txnRef,
+		"amount":           req.Amount,
+		"payment_type":     req.PaymentType,
+		"status":           "APPROVED",
+		"crypto_signature": cryptoSig,
+	})
+}
+
+// RefundPayment processes a refund for a transaction or order
+func RefundPayment(c *gin.Context) {
+	var req models.RefundRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Datos de reembolso inválidos"})
+		return
+	}
+
+	if req.TransactionRef == "" && req.OrderID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Debes proporcionar 'transaction_ref' o 'order_id' para procesar el reembolso"})
+		return
+	}
+
+	var paymentID, orderID, txnRef string
+	var amount float64
+	err := config.DB.QueryRow(`
+		SELECT id, order_id, transaction_ref, amount
+		FROM payments
+		WHERE transaction_ref = $1 OR order_id::text = $2 OR id::text = $2
+		LIMIT 1`,
+		req.TransactionRef, req.OrderID,
+	).Scan(&paymentID, &orderID, &txnRef, &amount)
+
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Transacción u orden no encontrada para reembolsar"})
+		return
+	}
+
+	config.DB.Exec(`UPDATE payments SET status = 'REFUNDED' WHERE id = $1`, paymentID)
+	config.DB.Exec(`UPDATE orders SET status = 'CANCELLED', payment_status = 'REFUNDED' WHERE id = $1`, orderID)
+
+	refundToken := fmt.Sprintf("RFD-%d-%d", time.Now().Unix(), rand.Intn(9000)+1000)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":         "Reembolso procesado exitosamente",
+		"refund_token":    refundToken,
+		"payment_id":      paymentID,
+		"order_id":        orderID,
+		"transaction_ref": txnRef,
+		"refunded_amount": amount,
+		"status":          "REFUNDED",
+		"reason":          req.Reason,
+		"processed_at":    time.Now(),
+	})
 }

@@ -64,8 +64,11 @@ type WishlistItem struct {
 type SendEmailNotificationRequest struct {
 	UserID         string  `json:"user_id" binding:"required"`
 	RecipientEmail string  `json:"recipient_email,omitempty"`
-	Type           string  `json:"type" binding:"required"` // 'ORDER_CONFIRMATION', 'ORDER_SHIPPED', 'ORDER_DELIVERED'
+	Type           string  `json:"type" binding:"required"` // 'ORDER_CONFIRMATION', 'ORDER_SHIPPED', 'ORDER_DELIVERED', 'RESERVATION_CONFIRMATION', 'RESERVATION_REMINDER', 'RESERVATION_CANCELLED'
 	OrderNumber    string  `json:"order_number,omitempty"`
+	ReservationID  string  `json:"reservation_id,omitempty"`
+	Subject        string  `json:"subject,omitempty"`
+	Message        string  `json:"message,omitempty"`
 	TrackingNumber string  `json:"tracking_number,omitempty"`
 	Carrier        string  `json:"carrier,omitempty"`
 	Total          float64 `json:"total,omitempty"`

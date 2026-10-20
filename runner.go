@@ -5,12 +5,16 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 )
@@ -135,6 +139,9 @@ func main() {
 
 	var wg sync.WaitGroup
 
+	// Iniciar API Gateway unificado en :8080 (ideal para exponer todos los servicios con un solo túnel de Ngrok)
+	go startAPIGateway()
+
 	for _, svc := range services {
 		wg.Add(1)
 		go func(s Service) {
@@ -144,6 +151,55 @@ func main() {
 	}
 
 	wg.Wait()
+}
+
+func startAPIGateway() {
+	routes := map[string]string{
+		"/api/auth":         "http://localhost:3002",
+		"/api/users":        "http://localhost:3002",
+		"/api/catalog":      "http://localhost:8081",
+		"/api/inventory":    "http://localhost:8082",
+		"/api/cart":         "http://localhost:8083",
+		"/api/orders":       "http://localhost:8084",
+		"/api/payments":     "http://localhost:8084",
+		"/api/shipping":     "http://localhost:8085",
+		"/api/interactions": "http://localhost:8086",
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Cabeceras CORS y soporte para Ngrok
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, ngrok-skip-browser-warning")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		if r.URL.Path == "/" || r.URL.Path == "/health" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":"OK","gateway":"Monolito API Gateway :8080","services":["/api/payments","/api/orders","/api/interactions"]}`))
+			return
+		}
+
+		for prefix, target := range routes {
+			if strings.HasPrefix(r.URL.Path, prefix) {
+				targetURL, _ := url.Parse(target)
+				proxy := httputil.NewSingleHostReverseProxy(targetURL)
+				proxy.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"Ruta no encontrada en el API Gateway"}`))
+	})
+
+	fmt.Printf("%s[GATEWAY  :8080]%s API Gateway activo en http://localhost:8080 (Usa 'ngrok http 8080' para compartir Pagos y Notificaciones)\n", ColorBrGreen, ColorReset)
+	_ = http.ListenAndServe(":8080", mux)
 }
 
 func startService(s Service) {

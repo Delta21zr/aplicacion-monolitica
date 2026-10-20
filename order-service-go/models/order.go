@@ -7,8 +7,29 @@ type CheckoutRequest struct {
 	PaymentMethod   string       `json:"payment_method" binding:"required"` // 'CREDIT_CARD', 'DEBIT_CARD', 'PAYPAL'
 	CardDetails     *CardPayload `json:"card_details,omitempty"`
 	PayPalOrderID   string       `json:"paypal_order_id,omitempty"`
-	ShippingAddress string       `json:"shipping_address" binding:"required"`
+	ShippingAddress string       `json:"shipping_address"`
+	Amount          float64      `json:"amount,omitempty"`
+	Concept         string       `json:"concept,omitempty"`
 	Notes           string       `json:"notes,omitempty"`
+}
+
+type DirectChargeRequest struct {
+	UserID        string       `json:"user_id" binding:"required"`
+	ReservationID string       `json:"reservation_id,omitempty"`
+	Concept       string       `json:"concept,omitempty"`
+	Amount        float64      `json:"amount" binding:"required"`
+	PaymentType   string       `json:"payment_type,omitempty"` // 'ANTICIPO' | 'TOTAL'
+	PaymentMethod string       `json:"payment_method" binding:"required"` // 'CREDIT_CARD', 'DEBIT_CARD', 'PAYPAL'
+	CardDetails   *CardPayload `json:"card_details,omitempty"`
+	PayPalOrderID string       `json:"paypal_order_id,omitempty"`
+	RecipientEmail string      `json:"recipient_email,omitempty"`
+}
+
+type RefundRequest struct {
+	TransactionRef string  `json:"transaction_ref,omitempty"`
+	OrderID        string  `json:"order_id,omitempty"`
+	Reason         string  `json:"reason,omitempty"`
+	Amount         float64 `json:"amount,omitempty"`
 }
 
 type CardPayload struct {
