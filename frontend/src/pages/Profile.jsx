@@ -50,6 +50,18 @@ export default function Profile() {
   const [sharedPreview, setSharedPreview] = useState(null);
   const [notifications, setNotifications] = useState([]);
 
+  // Partner SOA (Salvador - Hotel Paraíso: Microservicio 1 Usuarios & Microservicio 2 Notificaciones)
+  const [hotelConfig, setHotelConfig] = useState({ hotel_url: 'http://localhost:8000', online: false, modo: '', mensaje: '' });
+  const [hotelUrlInput, setHotelUrlInput] = useState('http://localhost:8000');
+  const [hotelNotifications, setHotelNotifications] = useState([]);
+  const [hotelReservations, setHotelReservations] = useState([]);
+  const [hotelSource, setHotelSource] = useState('');
+  const [hotelMsg, setHotelMsg] = useState('');
+  const [hotelUser, setHotelUser] = useState(() => {
+    const saved = localStorage.getItem('hotel_user');
+    return saved ? JSON.parse(saved) : null;
+  });
+
   const navigate = useNavigate();
   const token = localStorage.getItem('token');
 
@@ -74,6 +86,7 @@ export default function Profile() {
     fetchOrders();
     fetchWishlists();
     fetchNotifications();
+    fetchPartnerHotelData();
     if (token) {
       fetchAddresses();
       fetchPaymentMethods();
@@ -193,6 +206,71 @@ export default function Profile() {
       setNotifications(res.data || []);
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  // Partner Hotel SOA (Microservicio 1 Usuarios & Microservicio 2 Notificaciones de Salvador)
+  const fetchPartnerHotelData = async () => {
+    try {
+      const cfgRes = await axios.get('http://localhost:8080/api/partner-hotel/config');
+      setHotelConfig(cfgRes.data);
+      setHotelUrlInput(cfgRes.data.hotel_url || 'http://localhost:8000');
+
+      const hotelToken = localStorage.getItem('hotel_token') || '';
+      const targetEmail = hotelUser?.correo || user?.email || 'juan@cliente.com';
+      const notifRes = await axios.get(`http://localhost:8080/api/partner-hotel/notifications?email=${encodeURIComponent(targetEmail)}`, {
+        headers: { 'X-Hotel-Token': hotelToken },
+      });
+      setHotelNotifications(notifRes.data?.notificaciones || []);
+      setHotelReservations(notifRes.data?.reservaciones || []);
+      setHotelSource(notifRes.data?.origen_servicio || '');
+    } catch (err) {
+      console.error('Error consultando puente Hotel SOA:', err);
+    }
+  };
+
+  const handleSaveHotelUrl = async (e) => {
+    e.preventDefault();
+    setHotelMsg('');
+    try {
+      await axios.post('http://localhost:8080/api/partner-hotel/config', {
+        hotel_url: hotelUrlInput,
+      });
+      setHotelMsg('✅ URL de Hotel Paraíso actualizada. Re-verificando conexión...');
+      await fetchPartnerHotelData();
+    } catch (err) {
+      setHotelMsg('Error al guardar URL del hotel');
+    }
+  };
+
+  const handleClearHotelNotifications = async () => {
+    try {
+      const hotelToken = localStorage.getItem('hotel_token') || '';
+      const res = await axios.post('http://localhost:8080/api/partner-hotel/notifications/clear', {}, {
+        headers: { 'X-Hotel-Token': hotelToken },
+      });
+      setHotelNotifications([]);
+      setHotelMsg(`✅ ${res.data?.mensaje || 'Bandeja limpiada'}`);
+    } catch (err) {
+      alert('Error al limpiar notificaciones del hotel');
+    }
+  };
+
+  const handleQuickHotelSSO = async (demoEmail) => {
+    try {
+      const ssoRes = await axios.post('http://localhost:8080/api/partner-hotel/login', {
+        email: demoEmail,
+        password: '123',
+      });
+      if (ssoRes.data?.exito) {
+        localStorage.setItem('hotel_token', ssoRes.data.token);
+        localStorage.setItem('hotel_user', JSON.stringify(ssoRes.data.usuario));
+        setHotelUser(ssoRes.data.usuario);
+        setHotelMsg(`✅ Sesión SSO vinculada con ${ssoRes.data.usuario.nombre} (${ssoRes.data.usuario.correo})`);
+        await fetchPartnerHotelData();
+      }
+    } catch (err) {
+      setHotelMsg('Error al cambiar usuario SSO del hotel');
     }
   };
 
@@ -390,6 +468,17 @@ export default function Profile() {
           }}
         >
           🔔 Notificaciones Email ({notifications.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('hotel-soa')}
+          style={{
+            backgroundColor: activeTab === 'hotel-soa' ? '#1e40af' : '#dbeafe',
+            color: activeTab === 'hotel-soa' ? '#fff' : '#1e3a8a',
+            borderRadius: '6px 6px 0 0',
+            fontWeight: '700',
+          }}
+        >
+          🏨 Hotel Paraíso SOA ({hotelNotifications.length})
         </button>
         {token && (
           <>
@@ -689,6 +778,171 @@ export default function Profile() {
           ) : (
             <div className="card" style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
               No hay notificaciones enviadas aún. Al realizar una compra se enviarán correos transaccionales automáticamente.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tab 4: Integración SOA Hotel Paraíso (Salvador - Microservicios Usuarios y Notificaciones en GraphQL) */}
+      {activeTab === 'hotel-soa' && (
+        <div style={{ display: 'grid', gap: '1.5rem' }}>
+          {/* Panel de Configuración del Puente GraphQL de Salvador */}
+          <div className="card" style={{ border: '2px solid #2563eb', backgroundColor: '#eff6ff' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+              <div>
+                <h3 style={{ margin: 0, color: '#1e40af' }}>
+                  🏨 Puente SOA: Consumiendo 2 Microservicios de Hotel Paraíso (Salvador)
+                </h3>
+                <p style={{ margin: '0.35rem 0 0 0', fontSize: '13px', color: '#1e3a8a' }}>
+                  <strong>Microservicio 1:</strong> Usuarios (<code>iniciarSesion</code> / <code>registrarUsuario</code>) &nbsp;|&nbsp;
+                  <strong>Microservicio 2:</strong> Notificaciones (<code>misNotificaciones</code> / <code>limpiarNotificaciones</code>)
+                </p>
+              </div>
+              <span
+                className="badge"
+                style={{
+                  backgroundColor: hotelConfig.online ? '#10b981' : '#f59e0b',
+                  color: '#fff',
+                  fontWeight: '700',
+                  padding: '0.35rem 0.75rem',
+                }}
+              >
+                {hotelConfig.online ? '🟢 CONECTADO EN VIVO (GRAPHQL)' : '🟡 MODO RESILIENTE SOA'}
+              </span>
+            </div>
+
+            <form onSubmit={handleSaveHotelUrl} style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem', flexWrap: 'wrap' }}>
+              <input
+                type="text"
+                value={hotelUrlInput}
+                onChange={(e) => setHotelUrlInput(e.target.value)}
+                placeholder="Ej. http://localhost:8000 o https://xxxx.ngrok-free.app"
+                style={{ flex: 1, minWidth: '260px', backgroundColor: '#fff' }}
+              />
+              <button type="submit" style={{ backgroundColor: '#1d4ed8', color: '#fff' }}>
+                Actualizar URL de Salvador
+              </button>
+              <button
+                type="button"
+                onClick={fetchPartnerHotelData}
+                style={{ backgroundColor: '#fff', color: '#1d4ed8', border: '1px solid #93c5fd' }}
+              >
+                🔄 Sincronizar Ahora
+              </button>
+            </form>
+            {hotelMsg && (
+              <p style={{ margin: '0.5rem 0 0 0', fontSize: '13px', color: '#047857', fontWeight: '600' }}>
+                {hotelMsg}
+              </p>
+            )}
+          </div>
+
+          {/* Microservicio 1: Estado de Identidad SSO en Hotel Paraíso */}
+          <div className="card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+              <div>
+                <h4 style={{ margin: 0, color: '#111827' }}>
+                  👤 Microservicio 1 Consumido: Usuarios (Autenticación SSO GraphQL)
+                </h4>
+                <p style={{ margin: '0.35rem 0 0 0', fontSize: '13px', color: 'var(--text-muted)' }}>
+                  Huésped activo en Hotel Paraíso:{' '}
+                  <strong>{hotelUser ? `${hotelUser.nombre} (${hotelUser.correo}) — Rol: ${hotelUser.rol}` : 'Juan Pérez (juan@cliente.com) — Sesión vinculada'}</strong>
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => handleQuickHotelSSO('juan@cliente.com')}
+                  style={{ fontSize: '12px', padding: '0.4rem 0.75rem', backgroundColor: '#eff6ff', color: '#1d4ed8' }}
+                >
+                  Cambiar a Juan Pérez
+                </button>
+                <button
+                  onClick={() => handleQuickHotelSSO('maria@cliente.com')}
+                  style={{ fontSize: '12px', padding: '0.4rem 0.75rem', backgroundColor: '#eff6ff', color: '#1d4ed8' }}
+                >
+                  Cambiar a María López
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Microservicio 2: Bandeja de Notificaciones del Hotel Paraíso */}
+          <div className="card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+              <div>
+                <h4 style={{ margin: 0 }}>
+                  🔔 Microservicio 2 Consumido: Bandeja de Notificaciones de Hotel Paraíso ({hotelNotifications.length})
+                </h4>
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  Origen de datos: <code>{hotelSource || 'PUENTE_SOA_GRAPHQL'}</code>
+                </span>
+              </div>
+              {hotelNotifications.length > 0 && (
+                <button
+                  onClick={handleClearHotelNotifications}
+                  style={{ backgroundColor: '#fee2e2', color: '#b91c1c', fontSize: '12px', padding: '0.4rem 0.8rem' }}
+                >
+                  🗑️ Limpiar Bandeja en Hotel
+                </button>
+              )}
+            </div>
+
+            {hotelNotifications.length > 0 ? (
+              <div style={{ display: 'grid', gap: '0.75rem' }}>
+                {hotelNotifications.map((hn) => (
+                  <div key={hn.id} style={{ padding: '1rem', borderRadius: '8px', border: '1px solid #dbeafe', backgroundColor: '#f8fafc' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem', flexWrap: 'wrap', gap: '0.4rem' }}>
+                      <strong style={{ color: '#1e3a8a' }}>
+                        {hn.canal === 'SMS' ? '📱 [SMS]' : '✉️ [EMAIL]'} {hn.asunto}
+                      </strong>
+                      <div style={{ display: 'flex', gap: '0.4rem' }}>
+                        <span className="badge" style={{ margin: 0, backgroundColor: '#dbeafe', color: '#1e40af' }}>
+                          Evento: {hn.eventoOrigen}
+                        </span>
+                        <span className="badge success" style={{ margin: 0 }}>
+                          {hn.estado}
+                        </span>
+                      </div>
+                    </div>
+                    <p style={{ margin: '0.35rem 0', fontSize: '14px', color: '#334155' }}>{hn.mensaje}</p>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between' }}>
+                      <span>Destinatario: {hn.destinatario}</span>
+                      <span>Fecha: {hn.fechaEnvio}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p style={{ color: 'var(--text-muted)', fontSize: '14px', textAlign: 'center', padding: '1.5rem 0' }}>
+                No hay notificaciones en la bandeja del Hotel Paraíso para este usuario.
+              </p>
+            )}
+          </div>
+
+          {/* Vista adicional de Reservaciones Asociadas del Huésped en Hotel Paraíso */}
+          {hotelReservations.length > 0 && (
+            <div className="card">
+              <h4 style={{ marginTop: 0, marginBottom: '0.75rem' }}>
+                🛏️ Reservaciones Activas del Huésped en Hotel Paraíso ({hotelReservations.length})
+              </h4>
+              <div style={{ display: 'grid', gap: '0.75rem' }}>
+                {hotelReservations.map((hr) => (
+                  <div key={hr.id} style={{ padding: '0.9rem 1rem', borderRadius: '8px', border: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <div>
+                      <strong>Folio #{hr.folio}</strong> — {hr.recurso?.nombre || 'Habitación Hotel Paraíso'}
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                        Llegada: {hr.fechaInicio} | Salida: {hr.fechaFin} | Huéspedes: {hr.personas}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <span className="badge success" style={{ margin: 0 }}>{hr.estado}</span>
+                      <div style={{ fontWeight: '700', marginTop: '0.25rem' }}>
+                        ${Number(hr.total || 0).toLocaleString('es-MX')} MXN
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
