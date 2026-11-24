@@ -210,6 +210,22 @@ export default function Cart() {
         shipment: shipmentData,
         shipping_cost: carrierToUse.shipping_cost,
       });
+
+      // Registrar consumo operativo de Tokens del Sistema por Orden (-2 🪙) y Guía Logística (-2 🪙)
+      try {
+        await axios.post('http://localhost:3002/api/users/system/tokens/consume', {
+          operation: 'order_checkout',
+          details: `Orden #${orderData.order_number}`,
+        });
+        if (shipmentData?.tracking_number) {
+          await axios.post('http://localhost:3002/api/users/system/tokens/consume', {
+            operation: 'shipping_label',
+            details: `Guía ${shipmentData.carrier} #${shipmentData.tracking_number}`,
+          });
+        }
+        window.dispatchEvent(new Event('system-license-updated'));
+      } catch (_) {}
+
       fetchCart();
     } catch (err) {
       setError(err.response?.data?.error || 'Error al procesar la compra');
@@ -224,24 +240,26 @@ export default function Cart() {
   if (checkoutResult) {
     return (
       <div style={{ maxWidth: '750px', margin: '2rem auto' }}>
-        <div className="card" style={{ padding: '2.5rem', borderTop: '5px solid var(--success-color)' }}>
+        <div className="card" style={{ padding: '2.5rem', borderTop: '3px solid #0a0a0a' }}>
           <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-            <span style={{ fontSize: '3rem' }}>🎉</span>
-            <h2 style={{ color: 'var(--success-color)', marginTop: '0.5rem' }}>{checkoutResult.message}</h2>
+            <div style={{ fontSize: '11px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--success-color)' }}>
+              Transacción Confirmada
+            </div>
+            <h2 style={{ color: '#0a0a0a', marginTop: '0.4rem' }}>{checkoutResult.message}</h2>
             <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>
               El stock ha sido descontado, tu pago fue aprobado y se generó tu comprobante electrónico y guía de envío.
             </p>
           </div>
 
-          <div style={{ backgroundColor: '#f9fafb', padding: '1.5rem', borderRadius: '8px', border: '1px solid var(--border-color)', marginBottom: '1.5rem', fontSize: '14px' }}>
+          <div style={{ backgroundColor: '#fafafa', padding: '1.5rem', borderRadius: '6px', border: '1px solid var(--border-color)', marginBottom: '1.5rem', fontSize: '14px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
               <div>
                 <strong>Número de Orden:</strong>
-                <p style={{ fontSize: '1.1rem', fontWeight: '700', color: '#111827', margin: '0.2rem 0' }}>{checkoutResult.order_number}</p>
+                <p style={{ fontSize: '1.1rem', fontWeight: '600', color: '#0a0a0a', margin: '0.2rem 0' }}>{checkoutResult.order_number}</p>
               </div>
               <div>
                 <strong>Recibo Electrónico:</strong>
-                <p style={{ fontSize: '1.1rem', fontWeight: '700', color: '#111827', margin: '0.2rem 0' }}>{checkoutResult.receipt_number}</p>
+                <p style={{ fontSize: '1.1rem', fontWeight: '600', color: '#0a0a0a', margin: '0.2rem 0' }}>{checkoutResult.receipt_number}</p>
               </div>
               <div>
                 <strong>Referencia de Pago:</strong>
@@ -249,24 +267,24 @@ export default function Cart() {
               </div>
               <div>
                 <strong>Total Cobrado (Carrito):</strong>
-                <p style={{ margin: '0.2rem 0', fontWeight: '700', color: 'var(--success-color)' }}>
+                <p style={{ margin: '0.2rem 0', fontWeight: '600', color: 'var(--success-color)' }}>
                   ${checkoutResult.total?.toLocaleString('es-MX')} (+ ${checkoutResult.shipping_cost} envío)
                 </p>
               </div>
             </div>
 
             {checkoutResult.shipment && (
-              <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px dashed var(--border-color)' }}>
-                <strong>🚚 Logística y Guía de Rastreo ({checkoutResult.shipment.carrier}):</strong>
-                <p style={{ margin: '0.3rem 0', fontFamily: 'monospace', fontSize: '15px', fontWeight: '700', color: '#2563eb' }}>
+              <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
+                <strong>Logística y Guía de Rastreo ({checkoutResult.shipment.carrier}):</strong>
+                <p style={{ margin: '0.3rem 0', fontFamily: 'monospace', fontSize: '14px', fontWeight: '600', color: '#0a0a0a' }}>
                   Guía: {checkoutResult.shipment.tracking_number} — Estado: {checkoutResult.shipment.status}
                 </p>
               </div>
             )}
 
-            <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px dashed var(--border-color)' }}>
-              <strong>🔒 Firma Criptográfica de la Transacción (HMAC-SHA256):</strong>
-              <p style={{ fontFamily: 'monospace', fontSize: '12px', wordBreak: 'break-all', backgroundColor: '#e5e7eb', padding: '0.5rem', borderRadius: '4px', marginTop: '0.3rem' }}>
+            <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
+              <strong>Firma Criptográfica de la Transacción (HMAC-SHA256):</strong>
+              <p style={{ fontFamily: 'monospace', fontSize: '12px', wordBreak: 'break-all', backgroundColor: '#f5f5f5', padding: '0.5rem', borderRadius: '4px', marginTop: '0.3rem' }}>
                 {checkoutResult.crypto_signature}
               </p>
             </div>
@@ -274,10 +292,10 @@ export default function Cart() {
 
           <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
             <Link to="/profile">
-              <button>📦 Ver Historial de Pedidos, Recibos y Rastreo</button>
+              <button>Ver Historial de Pedidos y Rastreo</button>
             </Link>
             <Link to="/">
-              <button style={{ backgroundColor: '#f3f4f6', color: '#111' }}>Seguir Comprando</button>
+              <button style={{ backgroundColor: '#ffffff', color: '#0a0a0a', border: '1px solid #d4d4d4' }}>Seguir Comprando</button>
             </Link>
           </div>
         </div>
@@ -345,10 +363,10 @@ export default function Cart() {
                   {/* Botón Eliminar */}
                   <button 
                     onClick={() => handleRemove(item.productId)}
-                    style={{ backgroundColor: '#fee2e2', color: '#ef4444', padding: '0.4rem 0.8rem', fontSize: '13px' }}
+                    style={{ backgroundColor: '#ffffff', color: '#525252', border: '1px solid #e5e5e5', padding: '0.4rem 0.8rem', fontSize: '12.5px' }}
                     title="Eliminar del carrito"
                   >
-                    🗑️ Quitar
+                    Quitar
                   </button>
                 </div>
               </div>
@@ -356,8 +374,8 @@ export default function Cart() {
 
             {/* Panel de Checkout: Logística y Pago */}
             {showCheckout && (
-              <div className="card" style={{ padding: '1.75rem', marginTop: '1.5rem', border: '2px solid var(--primary-color)' }}>
-                <h3 style={{ marginBottom: '1rem' }}>📦 1. Logística y Cotización de Envío (Shipping Service :8085)</h3>
+              <div className="card" style={{ padding: '1.75rem', marginTop: '1.5rem', border: '1.5px solid var(--primary-color)' }}>
+                <h3 style={{ marginBottom: '1rem', fontSize: '1.05rem' }}>1. Logística y Cotización de Envío (Shipping Service :8085)</h3>
 
                 {savedAddresses.length > 0 && (
                   <div className="form-group">
@@ -449,8 +467,8 @@ export default function Cart() {
                   </div>
                 )}
 
-                <h3 style={{ marginBottom: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
-                  💳 2. Método de Pago (Order & Payment Service :8084)
+                <h3 style={{ marginBottom: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)', fontSize: '1.05rem' }}>
+                  2. Método de Pago (Order & Payment Service :8084)
                 </h3>
 
                 <form onSubmit={handleProcessCheckout}>
@@ -493,9 +511,9 @@ export default function Cart() {
                   <button
                     type="submit"
                     disabled={processingCheckout}
-                    style={{ width: '100%', backgroundColor: 'var(--success-color)', padding: '0.9rem', fontSize: '15px', fontWeight: '700' }}
+                    style={{ width: '100%', backgroundColor: '#0a0a0a', padding: '0.85rem', fontSize: '14px', fontWeight: '600' }}
                   >
-                    {processingCheckout ? 'Procesando Orden, Pago y Guía...' : '✅ Confirmar y Pagar Ahora'}
+                    {processingCheckout ? 'Procesando Orden, Pago y Guía...' : 'Confirmar y Pagar Ahora'}
                   </button>
                 </form>
               </div>
@@ -573,9 +591,9 @@ export default function Cart() {
                     handleCalculateShipping();
                   }
                 }}
-                style={{ width: '100%', marginTop: '0.5rem', backgroundColor: 'var(--primary-color)', fontSize: '15px', padding: '0.8rem' }}
+                style={{ width: '100%', marginTop: '0.5rem', backgroundColor: 'var(--primary-color)', fontSize: '14px', padding: '0.75rem' }}
               >
-                {showCheckout ? 'Ocultar Opciones de Pago' : '💳 Proceder al Pago y Envío'}
+                {showCheckout ? 'Ocultar Opciones de Pago' : 'Proceder al Pago y Envío'}
               </button>
             </div>
           </div>

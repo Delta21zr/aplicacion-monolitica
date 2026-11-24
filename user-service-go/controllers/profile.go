@@ -1,11 +1,68 @@
 package controllers
 
 import (
+	"database/sql"
 	"net/http"
+	"time"
 
 	"user-service-go/config"
 	"github.com/gin-gonic/gin"
 )
+
+// GetProfile obtiene la información completa del perfil del usuario autenticado
+func GetProfile(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "No autorizado"})
+		return
+	}
+
+	var user struct {
+		ID                     string
+		Email                  string
+		FullName               string
+		Role                   string
+		Provider               string
+		SubscriptionPlan       string
+		SubscriptionTier       int
+		TokenBalance           int
+		SubscriptionStatus     string
+		SubscriptionExpiresAt  *string
+		CreatedAt              time.Time
+	}
+
+	var exp sql.NullTime
+	err := config.DB.QueryRow(`
+		SELECT id, email, full_name, role, provider, 
+		       COALESCE(subscription_plan, 'none'), COALESCE(subscription_tier, 0), COALESCE(token_balance, 150),
+		       COALESCE(subscription_status, 'active'), subscription_expires_at, created_at
+		FROM users WHERE id = $1
+	`, userID).Scan(&user.ID, &user.Email, &user.FullName, &user.Role, &user.Provider, &user.SubscriptionPlan, &user.SubscriptionTier, &user.TokenBalance, &user.SubscriptionStatus, &exp, &user.CreatedAt)
+
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Usuario no encontrado"})
+		return
+	}
+
+	if exp.Valid {
+		formatted := exp.Time.Format(time.RFC3339)
+		user.SubscriptionExpiresAt = &formatted
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"id":                      user.ID,
+		"email":                   user.Email,
+		"full_name":               user.FullName,
+		"role":                    user.Role,
+		"provider":                user.Provider,
+		"subscription_plan":       user.SubscriptionPlan,
+		"subscription_tier":       user.SubscriptionTier,
+		"token_balance":           user.TokenBalance,
+		"subscription_status":     user.SubscriptionStatus,
+		"subscription_expires_at": user.SubscriptionExpiresAt,
+		"created_at":              user.CreatedAt,
+	})
+}
 
 type UpdateProfileInput struct {
 	FullName string `json:"full_name" binding:"required"`

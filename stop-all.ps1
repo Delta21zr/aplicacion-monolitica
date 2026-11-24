@@ -1,7 +1,7 @@
-# Script para detener cualquier proceso que esté usando los puertos de los microservicios
+﻿# Script para detener cualquier proceso que esté usando los puertos de los microservicios
 Write-Host "🛑 Liberando puertos de los microservicios..." -ForegroundColor Yellow
 
-$ports = @(3002, 8081, 8082, 8083, 8084, 8085, 8086, 5173)
+$ports = @(3002, 8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088, 5173)
 
 foreach ($port in $ports) {
     try {

@@ -28,6 +28,11 @@ func main() {
 		c.Next()
 	})
 
+	// Health check
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{"status": "OK", "service": "catalog-service-go"})
+	})
+
 	// Routes
 	api := r.Group("/api/catalog")
 	{

@@ -97,14 +97,14 @@ export default function Register() {
           />
         </div>
         <div className="form-group" style={{ marginTop: '0.75rem' }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '13px', color: '#1e40af', fontWeight: '600' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '12.5px', color: '#404040', fontWeight: '500' }}>
             <input
               type="checkbox"
               checked={syncWithHotel}
               onChange={(e) => setSyncWithHotel(e.target.checked)}
               style={{ width: 'auto' }}
             />
-            🏨 Crear y vincular automáticamente mi cuenta en Hotel Paraíso (Microservicio Usuarios de Salvador)
+            Vincular automáticamente mi cuenta con Hotel Paraíso (SOA GraphQL)
           </label>
         </div>
         <button type="submit" disabled={loading} style={{ width: '100%', marginTop: '1rem' }}>

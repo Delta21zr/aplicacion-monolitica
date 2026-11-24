@@ -1,15 +1,35 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
+import SystemLicense from './SystemLicense';
 
 export default function Profile() {
-  const [activeTab, setActiveTab] = useState('orders'); // 'orders' | 'wishlists' | 'notifications' | 'personal' | 'addresses' | 'payments'
+  const [searchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'orders'); // 'orders' | 'subscriptions' | 'admin' | 'wishlists' | 'notifications' | 'personal' | 'addresses' | 'payments'
   const [user, setUser] = useState(() => {
     const saved = localStorage.getItem('user');
     return saved ? JSON.parse(saved) : null;
   });
   const [fullName, setFullName] = useState(user?.full_name || '');
   const [profileMsg, setProfileMsg] = useState({ text: '', type: '' });
+
+  // Subscriptions & Tokens state (:3002)
+  const [plans, setPlans] = useState([]);
+  const [tokenPackages, setTokenPackages] = useState([]);
+  const [tokenTransactions, setTokenTransactions] = useState([]);
+  const [customTokenAmount, setCustomTokenAmount] = useState(200);
+  const [selectedTokenPayment, setSelectedTokenPayment] = useState('Tarjeta Visa •••• 4242');
+  const [tokenPurchaseLoading, setTokenPurchaseLoading] = useState(false);
+  const [currentSubscription, setCurrentSubscription] = useState(null);
+  const [subLoading, setSubLoading] = useState(false);
+  const [subMsg, setSubMsg] = useState({ text: '', type: '' });
+
+  // Admin management state (:3002)
+  const [adminUsers, setAdminUsers] = useState([]);
+  const [adminStats, setAdminStats] = useState(null);
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminSearch, setAdminSearch] = useState('');
+  const [adminMsg, setAdminMsg] = useState({ text: '', type: '' });
 
   // Addresses state
   const [addresses, setAddresses] = useState([]);
@@ -43,6 +63,20 @@ export default function Profile() {
   const [selectedReceipt, setSelectedReceipt] = useState(null);
   const [selectedShipment, setSelectedShipment] = useState(null);
   const [shippingMsg, setShippingMsg] = useState('');
+
+  // Facturación CFDI 4.0 Profact (:8087)
+  const [facturaModalOrder, setFacturaModalOrder] = useState(null);
+  const [facturaFormData, setFacturaFormData] = useState({
+    rfc_receptor: 'XAXX010101000',
+    nombre_receptor: 'PUBLICO EN GENERAL',
+    cp_receptor: '01000',
+    regimen_fiscal_receptor: '616',
+    uso_cfdi: 'S01',
+    forma_pago: '04',
+  });
+  const [facturaResult, setFacturaResult] = useState(null);
+  const [facturaLoading, setFacturaLoading] = useState(false);
+  const [facturaError, setFacturaError] = useState('');
 
   // Wishlists & Notifications state (:8086)
   const [wishlists, setWishlists] = useState([]);
@@ -87,11 +121,26 @@ export default function Profile() {
     fetchWishlists();
     fetchNotifications();
     fetchPartnerHotelData();
+    fetchSubscriptionData();
     if (token) {
+      fetchUserProfile();
       fetchAddresses();
       fetchPaymentMethods();
     }
   }, [token, currentUserId]);
+
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    if (tabParam) setActiveTab(tabParam);
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (activeTab === 'subscriptions') {
+      fetchSubscriptionData();
+    } else if (activeTab === 'admin' && user?.role === 'admin') {
+      fetchAdminData();
+    }
+  }, [activeTab, user?.role]);
 
   // Orders & Receipts (:8084) + Shipping (:8085)
   const fetchOrders = async () => {
@@ -148,10 +197,54 @@ export default function Profile() {
       });
       const trackRes = await axios.get(`http://localhost:8085/api/shipping/shipments/track/${trackingNumber}`);
       setSelectedShipment(trackRes.data);
-      setShippingMsg(`✅ Estado actualizado a ${newStatus} y sincronizado con Order Service (:8084)`);
+      setShippingMsg(`Estado actualizado a ${newStatus} y sincronizado con Order Service (:8084)`);
       fetchOrders();
     } catch (err) {
       alert('Error al actualizar estado de envío');
+    }
+  };
+
+  // Handlers para Facturación CFDI 4.0 con Profact (:8087)
+  const handleOpenFacturaModal = async (order) => {
+    setFacturaModalOrder(order);
+    setFacturaError('');
+    setFacturaLoading(true);
+    try {
+      const res = await axios.get(`http://localhost:8087/api/billing/order/${order.id}/invoice`);
+      if (res.data && res.data.uuid) {
+        setFacturaResult(res.data);
+      } else {
+        setFacturaResult(null);
+      }
+    } catch (e) {
+      setFacturaResult(null);
+    } finally {
+      setFacturaLoading(false);
+    }
+  };
+
+  const handleEmitirFactura = async (e) => {
+    e.preventDefault();
+    if (!facturaModalOrder) return;
+    setFacturaLoading(true);
+    setFacturaError('');
+    try {
+      const res = await axios.post(`http://localhost:8087/api/billing/order/${facturaModalOrder.id}`, facturaFormData);
+      setFacturaResult(res.data);
+
+      // Registrar consumo operativo de Tokens del Sistema por Timbrado CFDI 4.0 (-5 🪙)
+      try {
+        await axios.post('http://localhost:3002/api/users/system/tokens/consume', {
+          operation: 'cfdi_invoice',
+          details: `CFDI 4.0 Orden #${facturaModalOrder.order_number || facturaModalOrder.id} (RFC: ${facturaFormData.rfc_receptor})`,
+        });
+        window.dispatchEvent(new Event('system-license-updated'));
+      } catch (_) {}
+    } catch (err) {
+      const msg = err.response?.data?.error || err.message || 'Error al emitir factura con Profact';
+      setFacturaError(msg);
+    } finally {
+      setFacturaLoading(false);
     }
   };
 
@@ -236,7 +329,7 @@ export default function Profile() {
       await axios.post('http://localhost:8080/api/partner-hotel/config', {
         hotel_url: hotelUrlInput,
       });
-      setHotelMsg('✅ URL de Hotel Paraíso actualizada. Re-verificando conexión...');
+      setHotelMsg('URL de Hotel Paraíso actualizada. Re-verificando conexión...');
       await fetchPartnerHotelData();
     } catch (err) {
       setHotelMsg('Error al guardar URL del hotel');
@@ -250,7 +343,7 @@ export default function Profile() {
         headers: { 'X-Hotel-Token': hotelToken },
       });
       setHotelNotifications([]);
-      setHotelMsg(`✅ ${res.data?.mensaje || 'Bandeja limpiada'}`);
+      setHotelMsg(res.data?.mensaje || 'Bandeja limpiada');
     } catch (err) {
       alert('Error al limpiar notificaciones del hotel');
     }
@@ -266,7 +359,7 @@ export default function Profile() {
         localStorage.setItem('hotel_token', ssoRes.data.token);
         localStorage.setItem('hotel_user', JSON.stringify(ssoRes.data.usuario));
         setHotelUser(ssoRes.data.usuario);
-        setHotelMsg(`✅ Sesión SSO vinculada con ${ssoRes.data.usuario.nombre} (${ssoRes.data.usuario.correo})`);
+        setHotelMsg(`Sesión SSO vinculada con ${ssoRes.data.usuario.nombre} (${ssoRes.data.usuario.correo})`);
         await fetchPartnerHotelData();
       }
     } catch (err) {
@@ -430,101 +523,450 @@ export default function Profile() {
     }
   };
 
-  return (
-    <div style={{ maxWidth: '980px', margin: '2rem auto' }}>
-      <h2 style={{ marginBottom: '0.5rem' }}>Centro de Cuenta, Pedidos y Fidelización</h2>
-      <p style={{ color: 'var(--text-muted)', fontSize: '14px', marginBottom: '1.5rem' }}>
-        Usuario activo: <strong>{user?.email || `Sesión Invitado (${currentUserId})`}</strong>
-      </p>
+  // --- Suscripciones por Tier y Compra de Tokens (:3002) ---
+  const fetchUserProfile = async () => {
+    if (!token) return;
+    try {
+      const res = await axios.get('http://localhost:3002/api/users/profile', authHeaders);
+      if (res.data) {
+        setUser(res.data);
+        localStorage.setItem('user', JSON.stringify(res.data));
+        window.dispatchEvent(new Event('user-updated'));
+        if (res.data.full_name) setFullName(res.data.full_name);
+      }
+    } catch (err) {
+      console.error('Error actualizando perfil:', err);
+    }
+  };
 
-      {/* Tabs */}
-      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', borderBottom: '1px solid var(--border-color)', marginBottom: '2rem' }}>
-        <button
-          onClick={() => setActiveTab('orders')}
-          style={{
-            backgroundColor: activeTab === 'orders' ? 'var(--primary-color)' : '#f3f4f6',
-            color: activeTab === 'orders' ? '#fff' : 'var(--text-color)',
-            borderRadius: '6px 6px 0 0',
-          }}
-        >
-          📦 Mis Pedidos y Envíos ({orders.length})
-        </button>
-        <button
-          onClick={() => setActiveTab('wishlists')}
-          style={{
-            backgroundColor: activeTab === 'wishlists' ? 'var(--primary-color)' : '#f3f4f6',
-            color: activeTab === 'wishlists' ? '#fff' : 'var(--text-color)',
-            borderRadius: '6px 6px 0 0',
-          }}
-        >
-          ❤️ Wishlists ({wishlists.length})
-        </button>
-        <button
-          onClick={() => setActiveTab('notifications')}
-          style={{
-            backgroundColor: activeTab === 'notifications' ? 'var(--primary-color)' : '#f3f4f6',
-            color: activeTab === 'notifications' ? '#fff' : 'var(--text-color)',
-            borderRadius: '6px 6px 0 0',
-          }}
-        >
-          🔔 Notificaciones Email ({notifications.length})
-        </button>
-        <button
-          onClick={() => setActiveTab('hotel-soa')}
-          style={{
-            backgroundColor: activeTab === 'hotel-soa' ? '#1e40af' : '#dbeafe',
-            color: activeTab === 'hotel-soa' ? '#fff' : '#1e3a8a',
-            borderRadius: '6px 6px 0 0',
-            fontWeight: '700',
-          }}
-        >
-          🏨 Hotel Paraíso SOA ({hotelNotifications.length})
-        </button>
-        {token && (
-          <>
+  const fetchSubscriptionData = async () => {
+    setSubLoading(true);
+    try {
+      const [plansRes, packsRes] = await Promise.all([
+        axios.get('http://localhost:3002/api/users/subscriptions/plans'),
+        axios.get('http://localhost:3002/api/users/tokens/packages'),
+      ]);
+      setPlans(plansRes.data || []);
+      setTokenPackages(packsRes.data || []);
+
+      if (token) {
+        const [subRes, walletRes] = await Promise.all([
+          axios.get('http://localhost:3002/api/users/subscription', authHeaders),
+          axios.get('http://localhost:3002/api/users/tokens/wallet', authHeaders),
+        ]);
+        setCurrentSubscription(subRes.data);
+        setTokenTransactions(walletRes.data?.transactions || []);
+      }
+    } catch (err) {
+      console.error('Error cargando Tiers y paquetes de tokens:', err);
+    } finally {
+      setSubLoading(false);
+    }
+  };
+
+  const handleSubscribe = async (planId) => {
+    setSubLoading(true);
+    setSubMsg({ text: '', type: '' });
+    try {
+      const res = await axios.post(
+        'http://localhost:3002/api/users/subscription/subscribe',
+        { plan_id: planId },
+        authHeaders
+      );
+      setSubMsg({ text: res.data.message || '¡Tier activado exitosamente con tus Tokens!', type: 'success' });
+      if (res.data.token) localStorage.setItem('token', res.data.token);
+      if (res.data.user) {
+        setUser(res.data.user);
+        localStorage.setItem('user', JSON.stringify(res.data.user));
+        window.dispatchEvent(new Event('user-updated'));
+      }
+      fetchSubscriptionData();
+    } catch (err) {
+      setSubMsg({
+        text: err.response?.data?.error || 'Error al activar Tier con Tokens',
+        type: 'error',
+      });
+    } finally {
+      setSubLoading(false);
+    }
+  };
+
+  const handlePurchaseTokens = async ({ packageId = '', customTokens = 0 }) => {
+    setTokenPurchaseLoading(true);
+    setSubMsg({ text: '', type: '' });
+    try {
+      const res = await axios.post(
+        'http://localhost:3002/api/users/tokens/purchase',
+        {
+          package_id: packageId,
+          custom_tokens: Number(customTokens) || 0,
+          payment_method: selectedTokenPayment,
+        },
+        authHeaders
+      );
+      setSubMsg({
+        text: `🪙 ${res.data.message} (Nuevo saldo: ${res.data.token_balance} Tokens)`,
+        type: 'success',
+      });
+      if (res.data.user) {
+        setUser(res.data.user);
+        localStorage.setItem('user', JSON.stringify(res.data.user));
+        window.dispatchEvent(new Event('user-updated'));
+      }
+      fetchSubscriptionData();
+    } catch (err) {
+      setSubMsg({
+        text: err.response?.data?.error || 'Error al procesar la compra de Tokens',
+        type: 'error',
+      });
+    } finally {
+      setTokenPurchaseLoading(false);
+    }
+  };
+
+  const handleCancelSubscription = async () => {
+    if (!window.confirm('¿Seguro que deseas cancelar tu Tier actual? Tus tokens restantes se conservarán en tu billetera.')) return;
+    setSubLoading(true);
+    setSubMsg({ text: '', type: '' });
+    try {
+      const res = await axios.post(
+        'http://localhost:3002/api/users/subscription/cancel',
+        {},
+        authHeaders
+      );
+      setSubMsg({ text: res.data.message, type: 'success' });
+      if (res.data.token) localStorage.setItem('token', res.data.token);
+      if (res.data.user) {
+        setUser(res.data.user);
+        localStorage.setItem('user', JSON.stringify(res.data.user));
+        window.dispatchEvent(new Event('user-updated'));
+      }
+      fetchSubscriptionData();
+    } catch (err) {
+      setSubMsg({ text: err.response?.data?.error || 'Error al cancelar Tier', type: 'error' });
+    } finally {
+      setSubLoading(false);
+    }
+  };
+
+  // --- Panel Administrador: Gestión de Usuarios, Tiers, Tokens y Roles (:3002) ---
+  const fetchAdminData = async () => {
+    if (!token || user?.role !== 'admin') return;
+    setAdminLoading(true);
+    try {
+      const [usersRes, statsRes] = await Promise.all([
+        axios.get('http://localhost:3002/api/users/admin/users', authHeaders),
+        axios.get('http://localhost:3002/api/users/admin/stats', authHeaders)
+      ]);
+      setAdminUsers(usersRes.data || []);
+      setAdminStats(statsRes.data || null);
+    } catch (err) {
+      console.error('Error cargando datos de administrador:', err);
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
+  const handleAdminUpdateSubscription = async (targetUserId, newPlanId) => {
+    setAdminMsg({ text: '', type: '' });
+    try {
+      const res = await axios.put(
+        `http://localhost:3002/api/users/admin/users/${targetUserId}/subscription`,
+        { plan_id: newPlanId },
+        authHeaders
+      );
+      setAdminMsg({ text: res.data.message, type: 'success' });
+      fetchAdminData();
+      if (targetUserId === user?.id) {
+        fetchUserProfile();
+      }
+    } catch (err) {
+      setAdminMsg({ text: err.response?.data?.error || 'Error al actualizar Tier', type: 'error' });
+    }
+  };
+
+  const handleAdminAddTokens = async (targetUserId, amount) => {
+    setAdminMsg({ text: '', type: '' });
+    try {
+      const res = await axios.post(
+        `http://localhost:3002/api/users/admin/users/${targetUserId}/tokens`,
+        {
+          amount: Number(amount),
+          reason: `Asignación manual desde Panel Admin (${amount >= 0 ? '+' : ''}${amount} Tokens)`,
+        },
+        authHeaders
+      );
+      setAdminMsg({ text: res.data.message, type: 'success' });
+      fetchAdminData();
+      if (targetUserId === user?.id) {
+        fetchUserProfile();
+        fetchSubscriptionData();
+      }
+    } catch (err) {
+      setAdminMsg({ text: err.response?.data?.error || 'Error al ajustar Tokens del usuario', type: 'error' });
+    }
+  };
+
+  const handleAdminUpdateRole = async (targetUserId, newRole) => {
+    setAdminMsg({ text: '', type: '' });
+    try {
+      const res = await axios.put(
+        `http://localhost:3002/api/users/admin/users/${targetUserId}/role`,
+        { role: newRole },
+        authHeaders
+      );
+      setAdminMsg({ text: res.data.message, type: 'success' });
+      fetchAdminData();
+      if (targetUserId === user?.id) {
+        fetchUserProfile();
+      }
+    } catch (err) {
+      setAdminMsg({ text: err.response?.data?.error || 'Error al actualizar rol', type: 'error' });
+    }
+  };
+
+  return (
+    <div style={{ maxWidth: '1060px', margin: '1.5rem auto' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', marginBottom: '1.5rem', gap: '10px' }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: '1.5rem' }}>Centro de Cuenta, Pedidos y Administración</h2>
+          <p style={{ color: 'var(--text-muted)', fontSize: '13.5px', margin: '0.25rem 0 0 0', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            Usuario activo: <strong>{user?.email || `Sesión Invitado (${currentUserId})`}</strong>
+            {user && (
+              <span
+                style={{
+                  fontSize: '10px',
+                  fontWeight: '600',
+                  padding: '2px 7px',
+                  borderRadius: '3px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  backgroundColor: user.role === 'admin' ? '#0a0a0a' : '#f5f5f5',
+                  color: user.role === 'admin' ? '#ffffff' : '#525252',
+                  border: '1px solid #e5e5e5',
+                }}
+              >
+                {user.role === 'admin' ? 'Administrador del Sistema' : 'Usuario de la Plataforma'}
+              </span>
+            )}
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button
+            onClick={() => setActiveTab('subscriptions')}
+            style={{
+              backgroundColor: '#0a0a0a',
+              color: '#fff',
+              fontSize: '12.5px',
+              padding: '0.45rem 0.9rem',
+            }}
+          >
+            Licencia del Sistema (Tiers y Tokens)
+          </button>
+          {user?.role === 'admin' && (
             <button
-              onClick={() => setActiveTab('personal')}
+              onClick={() => setActiveTab('admin')}
               style={{
-                backgroundColor: activeTab === 'personal' ? 'var(--primary-color)' : '#f3f4f6',
-                color: activeTab === 'personal' ? '#fff' : 'var(--text-color)',
-                borderRadius: '6px 6px 0 0',
+                backgroundColor: '#ffffff',
+                color: '#0a0a0a',
+                border: '1px solid #d4d4d4',
+                fontSize: '12.5px',
+                padding: '0.45rem 0.9rem',
               }}
             >
-              👤 Datos Personales
+              Panel Admin
             </button>
-            <button
-              onClick={() => setActiveTab('addresses')}
-              style={{
-                backgroundColor: activeTab === 'addresses' ? 'var(--primary-color)' : '#f3f4f6',
-                color: activeTab === 'addresses' ? '#fff' : 'var(--text-color)',
-                borderRadius: '6px 6px 0 0',
-              }}
-            >
-              📍 Direcciones ({addresses.length})
-            </button>
-            <button
-              onClick={() => setActiveTab('payments')}
-              style={{
-                backgroundColor: activeTab === 'payments' ? 'var(--primary-color)' : '#f3f4f6',
-                color: activeTab === 'payments' ? '#fff' : 'var(--text-color)',
-                borderRadius: '6px 6px 0 0',
-              }}
-            >
-              💳 Métodos de Pago ({paymentMethods.length})
-            </button>
-          </>
-        )}
+          )}
+        </div>
       </div>
+
+      {/* Tabs Minimalistas */}
+      <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', borderBottom: '1px solid var(--border-color)', marginBottom: '2rem', paddingBottom: '0.5rem' }}>
+        {[
+          { id: 'orders', label: `Pedidos y Envíos (${orders.length})`, show: true },
+          { id: 'subscriptions', label: 'Licencia del Sistema (Tiers y Tokens)', show: true },
+          { id: 'admin', label: `Usuarios y Admins (${adminUsers.length > 0 ? adminUsers.length : 'Control'})`, show: user?.role === 'admin' },
+          { id: 'wishlists', label: `Wishlists (${wishlists.length})`, show: true },
+          { id: 'notifications', label: `Notificaciones (${notifications.length})`, show: true },
+          { id: 'hotel-soa', label: `Hotel Paraíso SOA (${hotelNotifications.length})`, show: true },
+          { id: 'personal', label: 'Datos Personales', show: Boolean(token) },
+          { id: 'addresses', label: `Direcciones (${addresses.length})`, show: Boolean(token) },
+          { id: 'payments', label: `Métodos de Pago (${paymentMethods.length})`, show: Boolean(token) },
+        ]
+          .filter((t) => t.show)
+          .map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setActiveTab(t.id)}
+              style={{
+                backgroundColor: activeTab === t.id ? '#0a0a0a' : 'transparent',
+                color: activeTab === t.id ? '#ffffff' : '#525252',
+                border: activeTab === t.id ? '1px solid #0a0a0a' : '1px solid transparent',
+                borderRadius: '4px',
+                padding: '0.45rem 0.85rem',
+                fontSize: '12.5px',
+                fontWeight: activeTab === t.id ? '600' : '500',
+              }}
+            >
+              {t.label}
+            </button>
+          ))}
+      </div>
+
+      {/* Tab: Licenciamiento Comercial del Sistema por Tiers y Tokens */}
+      {activeTab === 'subscriptions' && <SystemLicense />}
+
+      {/* Tab: Panel de Control Administrativo */}
+      {activeTab === 'admin' && (
+        <div style={{ marginBottom: '3rem' }}>
+          {user?.role !== 'admin' ? (
+            <div className="card" style={{ padding: '2rem', textAlign: 'center', border: '1px solid #fecaca' }}>
+              <h3 style={{ color: '#991b1b' }}>Acceso Denegado</h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>
+                Esta sección está reservada exclusivamente para cuentas con rol de Administrador del Sistema.
+              </p>
+            </div>
+          ) : (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '10px' }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.2rem' }}>Gestión de Cuentas de Usuario y Administradores</h3>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '13px', margin: '4px 0 0 0' }}>
+                    El número máximo de Usuarios y Administradores permitidos depende del Tier de Licencia del Sistema activo.
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    onClick={() => setActiveTab('subscriptions')}
+                    style={{ fontSize: '12.5px', padding: '0.45rem 0.85rem', backgroundColor: '#0a0a0a', color: '#fff' }}
+                  >
+                    Ampliar Licencia / Comprar Tokens
+                  </button>
+                  <button
+                    onClick={fetchAdminData}
+                    disabled={adminLoading}
+                    style={{ fontSize: '12.5px', padding: '0.45rem 0.85rem', backgroundColor: '#ffffff', color: '#0a0a0a', border: '1px solid #d4d4d4' }}
+                  >
+                    {adminLoading ? 'Actualizando...' : 'Refrescar'}
+                  </button>
+                </div>
+              </div>
+
+              {adminMsg.text && (
+                <div
+                  style={{
+                    padding: '0.8rem 1.1rem',
+                    borderRadius: '6px',
+                    marginBottom: '1.5rem',
+                    backgroundColor: adminMsg.type === 'error' ? '#fef2f2' : '#f0fdf4',
+                    color: adminMsg.type === 'error' ? '#991b1b' : '#166534',
+                    border: `1px solid ${adminMsg.type === 'error' ? '#fecaca' : '#bbf7d0'}`,
+                    fontWeight: '500',
+                  }}
+                >
+                  {adminMsg.text}
+                </div>
+              )}
+
+              {adminStats && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', marginBottom: '1.75rem' }}>
+                  <div className="card" style={{ padding: '1.25rem' }}>
+                    <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Total Usuarios en Plataforma</p>
+                    <h2 style={{ margin: '0.4rem 0 0 0', fontSize: '1.85rem' }}>{adminStats.total_users}</h2>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Registrados en PostgreSQL</span>
+                  </div>
+                  <div className="card" style={{ padding: '1.25rem' }}>
+                    <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Cuentas Administrador</p>
+                    <h2 style={{ margin: '0.4rem 0 0 0', fontSize: '1.85rem' }}>{adminStats.admin_users}</h2>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Sujeto al límite del Tier del Sistema</span>
+                  </div>
+                  <div className="card" style={{ padding: '1.25rem' }}>
+                    <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Clientes Activos</p>
+                    <h2 style={{ margin: '0.4rem 0 0 0', fontSize: '1.85rem' }}>{adminStats.client_users}</h2>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Compradores de la tienda</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Filtro y Buscador de Usuarios */}
+              <div style={{ marginBottom: '1rem', display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                <input
+                  type="text"
+                  placeholder="Buscar usuario o administrador por correo o nombre..."
+                  value={adminSearch}
+                  onChange={(e) => setAdminSearch(e.target.value)}
+                />
+              </div>
+
+              {/* Tabla de Usuarios y Administradores */}
+              <div className="card" style={{ padding: '0', overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                  <thead style={{ backgroundColor: '#fafafa', borderBottom: '1px solid var(--border-color)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>
+                    <tr>
+                      <th style={{ padding: '0.75rem 1rem' }}>Nombre Completo</th>
+                      <th style={{ padding: '0.75rem 1rem' }}>Correo Electrónico</th>
+                      <th style={{ padding: '0.75rem 1rem' }}>Rol en el Sistema</th>
+                      <th style={{ padding: '0.75rem 1rem' }}>Fecha de Registro</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {adminUsers
+                      .filter((u) => {
+                        const q = adminSearch.toLowerCase();
+                        return (
+                          u.email.toLowerCase().includes(q) ||
+                          u.full_name.toLowerCase().includes(q) ||
+                          u.role.toLowerCase().includes(q)
+                        );
+                      })
+                      .map((u) => (
+                        <tr key={u.id} style={{ borderBottom: '1px solid #f5f5f5' }}>
+                          <td style={{ padding: '0.75rem 1rem', fontWeight: '500' }}>
+                            {u.full_name}
+                            {u.id === user?.id && <span style={{ marginLeft: '6px', fontSize: '11px', color: 'var(--text-muted)' }}>(Tú)</span>}
+                          </td>
+                          <td style={{ padding: '0.75rem 1rem', color: '#525252' }}>{u.email}</td>
+                          <td style={{ padding: '0.75rem 1rem' }}>
+                            <select
+                              value={u.role}
+                              onChange={(e) => handleAdminUpdateRole(u.id, e.target.value)}
+                              style={{
+                                width: 'auto',
+                                padding: '0.3rem 0.6rem',
+                                borderRadius: '4px',
+                                fontSize: '12px',
+                                fontWeight: '500',
+                                backgroundColor: u.role === 'admin' ? '#0a0a0a' : '#fafafa',
+                                color: u.role === 'admin' ? '#ffffff' : '#0a0a0a',
+                                border: '1px solid #d4d4d4',
+                              }}
+                            >
+                              <option value="cliente" style={{ backgroundColor: '#fff', color: '#0a0a0a' }}>Usuario / Cliente</option>
+                              <option value="admin" style={{ backgroundColor: '#fff', color: '#0a0a0a' }}>Administrador del Sistema</option>
+                            </select>
+                          </td>
+                          <td style={{ padding: '0.75rem 1rem', color: 'var(--text-muted)' }}>
+                            {new Date(u.created_at).toLocaleDateString('es-MX')}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Tab 1: Historial de Pedidos, Recibos Electrónicos y Rastreo Logístico (:8084 & :8085) */}
       {activeTab === 'orders' && (
         <div>
           {/* Modal / Panel de Recibo Electrónico */}
           {selectedReceipt && (
-            <div className="card" style={{ marginBottom: '2rem', border: '2px solid #10b981', backgroundColor: '#ecfdf5' }}>
+            <div className="card" style={{ marginBottom: '2rem', border: '1px solid #0a0a0a', backgroundColor: '#fafafa' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h3 style={{ margin: 0, color: '#065f46' }}>📄 Comprobante Fiscal / Recibo Electrónico #{selectedReceipt.receipt_number}</h3>
-                <button onClick={() => setSelectedReceipt(null)} style={{ backgroundColor: '#fff', color: '#111', padding: '0.3rem 0.7rem' }}>Cerrar ✕</button>
+                <h3 style={{ margin: 0 }}>Comprobante Fiscal / Recibo Electrónico #{selectedReceipt.receipt_number}</h3>
+                <button onClick={() => setSelectedReceipt(null)} style={{ backgroundColor: '#fff', color: '#111', border: '1px solid #d4d4d4', padding: '0.3rem 0.7rem' }}>Cerrar</button>
               </div>
               <div style={{ marginTop: '1rem', fontSize: '14px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                 <div><strong>Orden:</strong> {selectedReceipt.details?.order_number}</div>
@@ -534,7 +976,7 @@ export default function Profile() {
                 <div style={{ gridColumn: 'span 2' }}><strong>Dirección de Envío:</strong> {selectedReceipt.details?.shipping_address}</div>
                 <div style={{ gridColumn: 'span 2' }}>
                   <strong>Sello Digital SHA-256 del Comprobante:</strong>
-                  <div style={{ fontFamily: 'monospace', fontSize: '12px', backgroundColor: '#fff', padding: '0.5rem', borderRadius: '4px', marginTop: '0.25rem', wordBreak: 'break-all' }}>
+                  <div style={{ fontFamily: 'monospace', fontSize: '12px', backgroundColor: '#fff', border: '1px solid #e5e5e5', padding: '0.5rem', borderRadius: '4px', marginTop: '0.25rem', wordBreak: 'break-all' }}>
                     {selectedReceipt.crypto_hash}
                   </div>
                 </div>
@@ -544,12 +986,12 @@ export default function Profile() {
 
           {/* Modal / Panel de Rastreo y Simulación Logística (:8085) */}
           {selectedShipment && (
-            <div className="card" style={{ marginBottom: '2rem', border: '2px solid #2563eb', backgroundColor: '#eff6ff' }}>
+            <div className="card" style={{ marginBottom: '2rem', border: '1px solid #0a0a0a', backgroundColor: '#fafafa' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h3 style={{ margin: 0, color: '#1e40af' }}>
-                  🚚 Rastreo en Vivo — {selectedShipment.carrier} ({selectedShipment.tracking_number})
+                <h3 style={{ margin: 0 }}>
+                  Rastreo en Vivo — {selectedShipment.carrier} ({selectedShipment.tracking_number})
                 </h3>
-                <button onClick={() => setSelectedShipment(null)} style={{ backgroundColor: '#fff', color: '#111', padding: '0.3rem 0.7rem' }}>Cerrar ✕</button>
+                <button onClick={() => setSelectedShipment(null)} style={{ backgroundColor: '#fff', color: '#111', border: '1px solid #d4d4d4', padding: '0.3rem 0.7rem' }}>Cerrar</button>
               </div>
 
               <p style={{ fontSize: '14px', margin: '0.75rem 0' }}>
@@ -615,6 +1057,206 @@ export default function Profile() {
             </div>
           )}
 
+          {/* Modal / Panel de Facturación Electrónica CFDI 4.0 con Profact (:8087) */}
+          {facturaModalOrder && (
+            <div className="card" style={{ marginBottom: '2rem', border: '1px solid #0a0a0a', backgroundColor: '#fafafa', padding: '1.5rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h3 style={{ margin: 0 }}>
+                  Facturación Electrónica CFDI 4.0 — Profact (Orden #{facturaModalOrder.order_number})
+                </h3>
+                <button
+                  onClick={() => { setFacturaModalOrder(null); setFacturaResult(null); }}
+                  style={{ backgroundColor: '#fff', color: '#111', border: '1px solid #d4d4d4', padding: '0.3rem 0.7rem' }}
+                >
+                  Cerrar
+                </button>
+              </div>
+
+              {facturaLoading ? (
+                <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                  Conectando con el PAC Profact (TimbraCFDI)...
+                </div>
+              ) : facturaResult ? (
+                <div style={{ marginTop: '1rem', backgroundColor: '#fff', padding: '1.25rem', borderRadius: '6px', border: '1px solid #e5e5e5' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <div>
+                      <span className="badge success" style={{ margin: 0 }}>
+                        {facturaResult.modo === 'SIMULACION' ? 'TIMBRADO EXITOSO (SIMULACIÓN PROFACT)' : 'TIMBRADO OFICIAL SAT'}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '13px', color: '#6b7280' }}>
+                      Fecha Timbrado: {new Date(facturaResult.fecha_timbrado).toLocaleString('es-MX')}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', fontSize: '14px' }}>
+                    <div>
+                      <strong>Folio Fiscal (UUID SAT):</strong>
+                      <div style={{ fontFamily: 'monospace', color: '#0a0a0a', fontWeight: 'bold', fontSize: '13px' }}>
+                        {facturaResult.uuid}
+                      </div>
+                    </div>
+                    <div>
+                      <strong>Emisor (PAC Profact):</strong>
+                      <div>{facturaResult.nombre_emisor} ({facturaResult.rfc_emisor})</div>
+                    </div>
+                    <div>
+                      <strong>Receptor:</strong>
+                      <div>{facturaResult.nombre_receptor} ({facturaResult.rfc_receptor})</div>
+                      <div style={{ fontSize: '12px', color: '#6b7280' }}>CP: {facturaResult.cp_receptor} | Régimen: {facturaResult.regimen_fiscal_receptor} | Uso: {facturaResult.uso_cfdi}</div>
+                    </div>
+                    <div>
+                      <strong>Importes Fiscales:</strong>
+                      <div>Subtotal: ${facturaResult.subtotal?.toLocaleString('es-MX')}</div>
+                      <div>IVA (16%): ${facturaResult.iva?.toLocaleString('es-MX')}</div>
+                      <div style={{ fontWeight: 'bold', color: '#0a0a0a' }}>Total: ${facturaResult.total?.toLocaleString('es-MX')} {facturaResult.moneda}</div>
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid #e5e7eb', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <a
+                      href={`http://localhost:8087/api/billing/invoices/${facturaResult.uuid}/xml`}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ textDecoration: 'none' }}
+                    >
+                      <button style={{ backgroundColor: '#0a0a0a', color: '#fff', fontSize: '12.5px' }}>
+                        Descargar XML Timbrado Oficial
+                      </button>
+                    </a>
+                    <a
+                      href={`http://localhost:8087/api/billing/invoices/${facturaResult.uuid}/pdf`}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ textDecoration: 'none' }}
+                    >
+                      <button style={{ backgroundColor: '#ffffff', color: '#0a0a0a', border: '1px solid #d4d4d4', fontSize: '12.5px' }}>
+                        Ver Representación Impresa (HTML / PDF)
+                      </button>
+                    </a>
+                    {facturaResult.qr_code_url && (
+                      <a
+                        href={facturaResult.qr_code_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ textDecoration: 'none' }}
+                      >
+                        <button style={{ backgroundColor: '#ffffff', color: '#525252', border: '1px solid #d4d4d4', fontSize: '12.5px' }}>
+                          Validar en Portal SAT
+                        </button>
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <form onSubmit={handleEmitirFactura} style={{ marginTop: '1rem' }}>
+                  <p style={{ fontSize: '13.5px', color: 'var(--text-muted)', marginTop: 0 }}>
+                    Ingresa los datos fiscales del cliente para generar y timbrar el <strong>CFDI 4.0</strong> mediante el método <code>TimbraCFDI</code> de Profact.
+                  </p>
+
+                  {facturaError && (
+                    <div style={{ backgroundColor: '#fef2f2', color: '#991b1b', padding: '0.75rem', borderRadius: '6px', marginBottom: '1rem', fontSize: '13.5px', border: '1px solid #fecaca' }}>
+                      {facturaError}
+                    </div>
+                  )}
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
+                    <div>
+                      <label style={{ fontSize: '13px', fontWeight: 'bold' }}>RFC del Receptor:</label>
+                      <input
+                        type="text"
+                        value={facturaFormData.rfc_receptor}
+                        onChange={(e) => setFacturaFormData({ ...facturaFormData, rfc_receptor: e.target.value.toUpperCase() })}
+                        placeholder="XAXX010101000"
+                        required
+                        style={{ width: '100%', padding: '0.5rem', marginTop: '0.25rem', fontFamily: 'monospace' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '13px', fontWeight: 'bold' }}>Nombre o Razón Social:</label>
+                      <input
+                        type="text"
+                        value={facturaFormData.nombre_receptor}
+                        onChange={(e) => setFacturaFormData({ ...facturaFormData, nombre_receptor: e.target.value.toUpperCase() })}
+                        placeholder="PUBLICO EN GENERAL"
+                        required
+                        style={{ width: '100%', padding: '0.5rem', marginTop: '0.25rem' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '13px', fontWeight: 'bold' }}>Código Postal Fiscal:</label>
+                      <input
+                        type="text"
+                        value={facturaFormData.cp_receptor}
+                        onChange={(e) => setFacturaFormData({ ...facturaFormData, cp_receptor: e.target.value })}
+                        placeholder="01000"
+                        required
+                        style={{ width: '100%', padding: '0.5rem', marginTop: '0.25rem' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '13px', fontWeight: 'bold' }}>Régimen Fiscal (SAT):</label>
+                      <select
+                        value={facturaFormData.regimen_fiscal_receptor}
+                        onChange={(e) => setFacturaFormData({ ...facturaFormData, regimen_fiscal_receptor: e.target.value })}
+                        style={{ width: '100%', padding: '0.5rem', marginTop: '0.25rem' }}
+                      >
+                        <option value="616">616 - Sin obligaciones fiscales</option>
+                        <option value="605">605 - Sueldos y Salarios</option>
+                        <option value="612">612 - Personas Físicas con Actividades Empresariales</option>
+                        <option value="601">601 - General de Ley Personas Morales</option>
+                        <option value="626">626 - Régimen Simplificado de Confianza (RESICO)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '13px', fontWeight: 'bold' }}>Uso de CFDI:</label>
+                      <select
+                        value={facturaFormData.uso_cfdi}
+                        onChange={(e) => setFacturaFormData({ ...facturaFormData, uso_cfdi: e.target.value })}
+                        style={{ width: '100%', padding: '0.5rem', marginTop: '0.25rem' }}
+                      >
+                        <option value="S01">S01 - Sin efectos fiscales</option>
+                        <option value="G03">G03 - Gastos en general</option>
+                        <option value="G01">G01 - Adquisición de mercancías</option>
+                        <option value="CP01">CP01 - Pagos</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '13px', fontWeight: 'bold' }}>Forma de Pago:</label>
+                      <select
+                        value={facturaFormData.forma_pago}
+                        onChange={(e) => setFacturaFormData({ ...facturaFormData, forma_pago: e.target.value })}
+                        style={{ width: '100%', padding: '0.5rem', marginTop: '0.25rem' }}
+                      >
+                        <option value="04">04 - Tarjeta de crédito</option>
+                        <option value="28">28 - Tarjeta de débito</option>
+                        <option value="03">03 - Transferencia electrónica</option>
+                        <option value="01">01 - Efectivo</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: '1.25rem', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                    <button
+                      type="button"
+                      onClick={() => setFacturaModalOrder(null)}
+                      style={{ backgroundColor: '#e5e7eb', color: '#374151', padding: '0.5rem 1rem' }}
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={facturaLoading}
+                      style={{ backgroundColor: '#0a0a0a', color: '#fff', fontWeight: '600', padding: '0.5rem 1.25rem' }}
+                    >
+                      {facturaLoading ? 'Timbrando con Profact...' : 'Emitir y Timbrar Factura (Profact)'}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          )}
+
           {orders.length > 0 ? (
             <div style={{ display: 'grid', gap: '1rem' }}>
               {orders.map((ord) => (
@@ -652,18 +1294,24 @@ export default function Profile() {
                       </div>
                     </div>
 
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                       <button
                         onClick={() => handleViewReceipt(ord.id)}
-                        style={{ backgroundColor: '#ecfdf5', color: '#047857', fontSize: '13px', padding: '0.5rem 0.9rem' }}
+                        style={{ backgroundColor: '#ffffff', color: '#0a0a0a', border: '1px solid #d4d4d4', fontSize: '12.5px', padding: '0.45rem 0.85rem' }}
                       >
-                        📄 Recibo Electrónico
+                        Recibo Electrónico
                       </button>
                       <button
                         onClick={() => handleTrackOrderShipment(ord.id)}
-                        style={{ backgroundColor: '#eff6ff', color: '#1d4ed8', fontSize: '13px', padding: '0.5rem 0.9rem' }}
+                        style={{ backgroundColor: '#ffffff', color: '#0a0a0a', border: '1px solid #d4d4d4', fontSize: '12.5px', padding: '0.45rem 0.85rem' }}
                       >
-                        🚚 Rastrear / Actualizar Envío
+                        Rastrear Envío
+                      </button>
+                      <button
+                        onClick={() => handleOpenFacturaModal(ord)}
+                        style={{ backgroundColor: '#0a0a0a', color: '#ffffff', fontSize: '12.5px', padding: '0.45rem 0.85rem' }}
+                      >
+                        Facturar CFDI 4.0
                       </button>
                     </div>
                   </div>
@@ -699,12 +1347,12 @@ export default function Profile() {
           </div>
 
           {sharedPreview && (
-            <div className="card" style={{ marginBottom: '1.5rem', border: '2px solid #ec4899', backgroundColor: '#fdf2f8' }}>
+            <div className="card" style={{ marginBottom: '1.5rem', border: '1px solid #0a0a0a', backgroundColor: '#fafafa' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h4 style={{ margin: 0, color: '#9d174d' }}>
-                  🔗 Vista Pública Compartida: "{sharedPreview.name}" (Token: {sharedPreview.share_token})
+                <h4 style={{ margin: 0 }}>
+                  Vista Pública Compartida: "{sharedPreview.name}" (Token: {sharedPreview.share_token})
                 </h4>
-                <button onClick={() => setSharedPreview(null)} style={{ backgroundColor: '#fff', color: '#111', padding: '0.25rem 0.6rem' }}>Cerrar ✕</button>
+                <button onClick={() => setSharedPreview(null)} style={{ backgroundColor: '#fff', color: '#111', border: '1px solid #d4d4d4', padding: '0.25rem 0.6rem' }}>Cerrar</button>
               </div>
               <p style={{ fontSize: '13px', margin: '0.5rem 0' }}>
                 Endpoint público: <code>http://localhost:8086/api/interactions/wishlists/share/{sharedPreview.share_token}</code>
@@ -721,7 +1369,7 @@ export default function Profile() {
             {wishlists.map((w) => (
               <div key={w.id} className="card">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                  <h4 style={{ margin: 0 }}>❤️ {w.name}</h4>
+                  <h4 style={{ margin: 0 }}>{w.name}</h4>
                   <span className="badge success" style={{ margin: 0 }}>Pública ({w.share_token})</span>
                 </div>
 
@@ -729,12 +1377,12 @@ export default function Profile() {
                   <div style={{ margin: '0.75rem 0', fontSize: '14px' }}>
                     {w.items.map((item) => (
                       <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.35rem 0', borderBottom: '1px solid var(--border-color)' }}>
-                        <Link to={`/product/${item.product_id}`} style={{ color: '#2563eb' }}>
+                        <Link to={`/product/${item.product_id}`} style={{ color: '#0a0a0a', fontWeight: '500' }}>
                           {item.notes || `Producto #${item.product_id}`}
                         </Link>
                         <button
                           onClick={() => handleRemoveWishlistItem(w.id, item.product_id)}
-                          style={{ backgroundColor: '#fee2e2', color: '#ef4444', padding: '0.2rem 0.5rem', fontSize: '11px' }}
+                          style={{ backgroundColor: '#ffffff', color: '#525252', border: '1px solid #e5e5e5', padding: '0.2rem 0.5rem', fontSize: '11px' }}
                         >
                           Quitar
                         </button>
@@ -749,9 +1397,9 @@ export default function Profile() {
 
                 <button
                   onClick={() => handlePreviewSharedWishlist(w.share_token)}
-                  style={{ marginTop: 'auto', backgroundColor: '#fce7f3', color: '#be185d', fontSize: '13px' }}
+                  style={{ marginTop: 'auto', backgroundColor: '#fafafa', color: '#0a0a0a', border: '1px solid #d4d4d4', fontSize: '12.5px' }}
                 >
-                  🔗 Probar Enlace Compartible ({w.share_token})
+                  Probar Enlace Compartible ({w.share_token})
                 </button>
               </div>
             ))}
@@ -766,7 +1414,7 @@ export default function Profile() {
             notifications.map((n) => (
               <div key={n.id} className="card" style={{ padding: '1.25rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
-                  <strong style={{ color: '#111827' }}>✉️ {n.subject}</strong>
+                  <strong style={{ color: '#0a0a0a' }}>{n.subject}</strong>
                   <span className="badge success" style={{ margin: 0 }}>{n.type} ({n.status})</span>
                 </div>
                 <p style={{ margin: '0.3rem 0', fontSize: '14px', color: '#4b5563' }}>{n.body_content}</p>
@@ -785,15 +1433,15 @@ export default function Profile() {
 
       {/* Tab 4: Integración SOA Hotel Paraíso (Salvador - Microservicios Usuarios y Notificaciones en GraphQL) */}
       {activeTab === 'hotel-soa' && (
-        <div style={{ display: 'grid', gap: '1.5rem' }}>
+        <div style={{ display: 'grid', gap: '1.25rem' }}>
           {/* Panel de Configuración del Puente GraphQL de Salvador */}
-          <div className="card" style={{ border: '2px solid #2563eb', backgroundColor: '#eff6ff' }}>
+          <div className="card" style={{ border: '1px solid var(--border-color)', backgroundColor: '#fafafa' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
               <div>
-                <h3 style={{ margin: 0, color: '#1e40af' }}>
-                  🏨 Puente SOA: Consumiendo 2 Microservicios de Hotel Paraíso (Salvador)
+                <h3 style={{ margin: 0 }}>
+                  Puente SOA: Consumiendo 2 Microservicios de Hotel Paraíso (Salvador)
                 </h3>
-                <p style={{ margin: '0.35rem 0 0 0', fontSize: '13px', color: '#1e3a8a' }}>
+                <p style={{ margin: '0.35rem 0 0 0', fontSize: '13px', color: 'var(--text-muted)' }}>
                   <strong>Microservicio 1:</strong> Usuarios (<code>iniciarSesion</code> / <code>registrarUsuario</code>) &nbsp;|&nbsp;
                   <strong>Microservicio 2:</strong> Notificaciones (<code>misNotificaciones</code> / <code>limpiarNotificaciones</code>)
                 </p>
@@ -801,13 +1449,12 @@ export default function Profile() {
               <span
                 className="badge"
                 style={{
-                  backgroundColor: hotelConfig.online ? '#10b981' : '#f59e0b',
-                  color: '#fff',
-                  fontWeight: '700',
-                  padding: '0.35rem 0.75rem',
+                  backgroundColor: hotelConfig.online ? '#0a0a0a' : '#f5f5f5',
+                  color: hotelConfig.online ? '#fff' : '#525252',
+                  margin: 0,
                 }}
               >
-                {hotelConfig.online ? '🟢 CONECTADO EN VIVO (GRAPHQL)' : '🟡 MODO RESILIENTE SOA'}
+                {hotelConfig.online ? 'CONECTADO EN VIVO (GRAPHQL)' : 'MODO RESILIENTE SOA'}
               </span>
             </div>
 
@@ -819,19 +1466,19 @@ export default function Profile() {
                 placeholder="Ej. http://localhost:8000 o https://xxxx.ngrok-free.app"
                 style={{ flex: 1, minWidth: '260px', backgroundColor: '#fff' }}
               />
-              <button type="submit" style={{ backgroundColor: '#1d4ed8', color: '#fff' }}>
+              <button type="submit">
                 Actualizar URL de Salvador
               </button>
               <button
                 type="button"
                 onClick={fetchPartnerHotelData}
-                style={{ backgroundColor: '#fff', color: '#1d4ed8', border: '1px solid #93c5fd' }}
+                style={{ backgroundColor: '#fff', color: '#0a0a0a', border: '1px solid #d4d4d4' }}
               >
-                🔄 Sincronizar Ahora
+                Sincronizar Ahora
               </button>
             </form>
             {hotelMsg && (
-              <p style={{ margin: '0.5rem 0 0 0', fontSize: '13px', color: '#047857', fontWeight: '600' }}>
+              <p style={{ margin: '0.5rem 0 0 0', fontSize: '13px', color: '#15803d', fontWeight: '500' }}>
                 {hotelMsg}
               </p>
             )}
@@ -841,8 +1488,8 @@ export default function Profile() {
           <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
               <div>
-                <h4 style={{ margin: 0, color: '#111827' }}>
-                  👤 Microservicio 1 Consumido: Usuarios (Autenticación SSO GraphQL)
+                <h4 style={{ margin: 0 }}>
+                  Microservicio 1 Consumido: Usuarios (Autenticación SSO GraphQL)
                 </h4>
                 <p style={{ margin: '0.35rem 0 0 0', fontSize: '13px', color: 'var(--text-muted)' }}>
                   Huésped activo en Hotel Paraíso:{' '}
@@ -852,13 +1499,13 @@ export default function Profile() {
               <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
                 <button
                   onClick={() => handleQuickHotelSSO('juan@cliente.com')}
-                  style={{ fontSize: '12px', padding: '0.4rem 0.75rem', backgroundColor: '#eff6ff', color: '#1d4ed8' }}
+                  style={{ fontSize: '12px', padding: '0.4rem 0.75rem', backgroundColor: '#fafafa', color: '#0a0a0a', border: '1px solid #d4d4d4' }}
                 >
                   Cambiar a Juan Pérez
                 </button>
                 <button
                   onClick={() => handleQuickHotelSSO('maria@cliente.com')}
-                  style={{ fontSize: '12px', padding: '0.4rem 0.75rem', backgroundColor: '#eff6ff', color: '#1d4ed8' }}
+                  style={{ fontSize: '12px', padding: '0.4rem 0.75rem', backgroundColor: '#fafafa', color: '#0a0a0a', border: '1px solid #d4d4d4' }}
                 >
                   Cambiar a María López
                 </button>
@@ -871,7 +1518,7 @@ export default function Profile() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
               <div>
                 <h4 style={{ margin: 0 }}>
-                  🔔 Microservicio 2 Consumido: Bandeja de Notificaciones de Hotel Paraíso ({hotelNotifications.length})
+                  Microservicio 2 Consumido: Bandeja de Notificaciones de Hotel Paraíso ({hotelNotifications.length})
                 </h4>
                 <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                   Origen de datos: <code>{hotelSource || 'PUENTE_SOA_GRAPHQL'}</code>
@@ -880,9 +1527,9 @@ export default function Profile() {
               {hotelNotifications.length > 0 && (
                 <button
                   onClick={handleClearHotelNotifications}
-                  style={{ backgroundColor: '#fee2e2', color: '#b91c1c', fontSize: '12px', padding: '0.4rem 0.8rem' }}
+                  style={{ backgroundColor: '#ffffff', color: '#991b1b', border: '1px solid #fecaca', fontSize: '12px', padding: '0.4rem 0.8rem' }}
                 >
-                  🗑️ Limpiar Bandeja en Hotel
+                  Limpiar Bandeja en Hotel
                 </button>
               )}
             </div>
@@ -890,13 +1537,13 @@ export default function Profile() {
             {hotelNotifications.length > 0 ? (
               <div style={{ display: 'grid', gap: '0.75rem' }}>
                 {hotelNotifications.map((hn) => (
-                  <div key={hn.id} style={{ padding: '1rem', borderRadius: '8px', border: '1px solid #dbeafe', backgroundColor: '#f8fafc' }}>
+                  <div key={hn.id} style={{ padding: '1rem', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: '#fafafa' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem', flexWrap: 'wrap', gap: '0.4rem' }}>
-                      <strong style={{ color: '#1e3a8a' }}>
-                        {hn.canal === 'SMS' ? '📱 [SMS]' : '✉️ [EMAIL]'} {hn.asunto}
+                      <strong style={{ color: '#0a0a0a' }}>
+                        [{hn.canal === 'SMS' ? 'SMS' : 'EMAIL'}] {hn.asunto}
                       </strong>
                       <div style={{ display: 'flex', gap: '0.4rem' }}>
-                        <span className="badge" style={{ margin: 0, backgroundColor: '#dbeafe', color: '#1e40af' }}>
+                        <span className="badge" style={{ margin: 0 }}>
                           Evento: {hn.eventoOrigen}
                         </span>
                         <span className="badge success" style={{ margin: 0 }}>
@@ -904,7 +1551,7 @@ export default function Profile() {
                         </span>
                       </div>
                     </div>
-                    <p style={{ margin: '0.35rem 0', fontSize: '14px', color: '#334155' }}>{hn.mensaje}</p>
+                    <p style={{ margin: '0.35rem 0', fontSize: '14px', color: '#404040' }}>{hn.mensaje}</p>
                     <div style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between' }}>
                       <span>Destinatario: {hn.destinatario}</span>
                       <span>Fecha: {hn.fechaEnvio}</span>
@@ -923,7 +1570,7 @@ export default function Profile() {
           {hotelReservations.length > 0 && (
             <div className="card">
               <h4 style={{ marginTop: 0, marginBottom: '0.75rem' }}>
-                🛏️ Reservaciones Activas del Huésped en Hotel Paraíso ({hotelReservations.length})
+                Reservaciones Activas del Huésped en Hotel Paraíso ({hotelReservations.length})
               </h4>
               <div style={{ display: 'grid', gap: '0.75rem' }}>
                 {hotelReservations.map((hr) => (
@@ -1118,7 +1765,7 @@ export default function Profile() {
             {paymentMethods.map((pm) => (
               <div key={pm.id} className="card">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontWeight: '700', fontSize: '1.1rem' }}>💳 {pm.card_brand}</span>
+                  <span style={{ fontWeight: '600', fontSize: '1.05rem' }}>{pm.card_brand}</span>
                   {pm.is_default && <span className="badge success" style={{ margin: 0 }}>Predeterminado</span>}
                 </div>
                 <p style={{ margin: '1rem 0', fontSize: '16px', letterSpacing: '2px', color: '#4b5563' }}>

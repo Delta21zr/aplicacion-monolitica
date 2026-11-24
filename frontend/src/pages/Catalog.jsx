@@ -162,7 +162,7 @@ export default function Catalog() {
                 onChange={(e) => setOnlyAvailable(e.target.checked)} 
                 style={{ width: 'auto' }}
               />
-              ⚡ Solo productos disponibles (En stock)
+              Solo productos disponibles (En stock)
             </label>
 
             <div style={{ display: 'flex', gap: '0.75rem' }}>
@@ -200,8 +200,8 @@ export default function Catalog() {
                   style={{ width: '100%', height: '160px', objectFit: 'cover', borderRadius: '6px', marginBottom: '1rem' }} 
                 />
               ) : (
-                <div style={{ backgroundColor: '#f3f4f6', height: '160px', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af', marginBottom: '1rem' }}>
-                  📦 Sin imagen
+                <div style={{ backgroundColor: '#f5f5f5', height: '160px', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a3a3a3', marginBottom: '1rem', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Sin imagen
                 </div>
               )}
 

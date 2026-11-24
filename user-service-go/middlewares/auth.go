@@ -1,6 +1,7 @@
 package middlewares
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -27,7 +28,7 @@ func VerifyToken() gin.HandlerFunc {
 		var exists string
 		err := config.DB.QueryRow("SELECT token FROM blacklisted_tokens WHERE token = $1", tokenString).Scan(&exists)
 		if err == nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"message": "Token expirado o sesiA3n cerrada."})
+			c.JSON(http.StatusUnauthorized, gin.H{"message": "Token expirado o sesión cerrada."})
 			c.Abort()
 			return
 		}
@@ -45,9 +46,40 @@ func VerifyToken() gin.HandlerFunc {
 		// Extraer datos e inyectarlos en el contexto
 		if claims, ok := token.Claims.(jwt.MapClaims); ok {
 			c.Set("userID", claims["id"])
+			c.Set("userEmail", claims["email"])
 			c.Set("userRole", claims["role"])
+			if plan, ok := claims["subscription_plan"]; ok && plan != nil {
+				c.Set("subscriptionPlan", plan)
+			} else {
+				c.Set("subscriptionPlan", "basic")
+			}
 		}
 
 		c.Next()
+	}
+}
+
+// RequireRole verifica que el usuario autenticado cuente con alguno de los roles requeridos
+func RequireRole(allowedRoles ...string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		roleVal, exists := c.Get("userRole")
+		if !exists {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Rol no identificado en la sesión"})
+			c.Abort()
+			return
+		}
+
+		userRole, _ := roleVal.(string)
+		for _, r := range allowedRoles {
+			if r == userRole {
+				c.Next()
+				return
+			}
+		}
+
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": fmt.Sprintf("Acceso denegado: se requiere uno de los roles %v (rol actual: '%s')", allowedRoles, userRole),
+		})
+		c.Abort()
 	}
 }

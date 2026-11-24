@@ -24,6 +24,10 @@ func main() {
 		c.Next()
 	})
 
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{"status": "OK", "service": "cart-service-go"})
+	})
+
 	api := r.Group("/api/cart")
 	{
 		api.GET("/:userId", controllers.GetCart)

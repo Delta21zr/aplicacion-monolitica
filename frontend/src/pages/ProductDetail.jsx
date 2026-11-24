@@ -103,7 +103,7 @@ export default function ProductDetail() {
         product_id: product.id,
         notes: `${product.name} ($${product.price})`,
       });
-      setWishlistMsg('❤️ Agregado a tu Wishlist (puedes verla y compartirla desde Mi Perfil)');
+      setWishlistMsg('Agregado a tu Wishlist (disponible en Mi Perfil)');
       setTimeout(() => setWishlistMsg(''), 4000);
     } catch (err) {
       console.error(err);
@@ -125,7 +125,7 @@ export default function ProductDetail() {
         comment: reviewComment,
       });
       const verifiedText = res.data.is_verified_buyer
-        ? '✅ ¡Publicada como Comprador Verificado!'
+        ? 'Publicada como Comprador Verificado'
         : 'Publicada (Sin compra previa registrada para este usuario)';
       setReviewMsg(`Reseña registrada: ${verifiedText}`);
       setReviewTitle('');
@@ -160,7 +160,7 @@ export default function ProductDetail() {
                   style={{ width: '100%', height: '100%', objectFit: 'contain' }} 
                 />
               ) : (
-                <span style={{ color: 'var(--text-muted)', fontSize: '18px' }}>🖼️ Sin imagen disponible</span>
+                <span style={{ color: 'var(--text-muted)', fontSize: '14px' }}>Sin imagen disponible</span>
               )}
             </div>
 
@@ -195,8 +195,8 @@ export default function ProductDetail() {
               <span className="badge" style={{ margin: 0 }}>{product.category || 'General'}</span>
               {product.subcategory && <span className="badge" style={{ margin: 0, backgroundColor: '#e5e7eb' }}>{product.subcategory}</span>}
               {reviewsData.total_reviews > 0 && (
-                <span style={{ fontSize: '13px', fontWeight: '600', color: '#d97706', marginLeft: 'auto' }}>
-                  ⭐ {reviewsData.average_rating} ({reviewsData.total_reviews} reseña{reviewsData.total_reviews > 1 ? 's' : ''})
+                <span style={{ fontSize: '13px', fontWeight: '600', color: '#0a0a0a', marginLeft: 'auto' }}>
+                  {reviewsData.average_rating} / 5 ({reviewsData.total_reviews} reseña{reviewsData.total_reviews > 1 ? 's' : ''})
                 </span>
               )}
             </div>
@@ -271,20 +271,20 @@ export default function ProductDetail() {
               </div>
 
               <button 
-                style={{ flexGrow: 1, padding: '0.8rem', fontSize: '15px' }} 
+                style={{ flexGrow: 1, padding: '0.8rem', fontSize: '14px' }} 
                 disabled={stock === 0 || stock === null || adding}
                 onClick={handleAddToCart}
               >
-                {adding ? 'Agregando...' : (stock > 0 ? '🛒 Agregar al Carrito' : 'Agotado')}
+                {adding ? 'Agregando...' : (stock > 0 ? 'Agregar al Carrito' : 'Agotado')}
               </button>
 
               <button
                 type="button"
                 onClick={handleAddToWishlist}
                 title="Guardar en Lista de Deseos (Wishlist)"
-                style={{ padding: '0.8rem 1rem', backgroundColor: '#fce7f3', color: '#be185d', fontSize: '15px' }}
+                style={{ padding: '0.8rem 1rem', backgroundColor: '#ffffff', color: '#0a0a0a', border: '1px solid #d4d4d4', fontSize: '13.5px' }}
               >
-                ❤️ Wishlist
+                Guardar en Wishlist
               </button>
             </div>
             
@@ -329,14 +329,14 @@ export default function ProductDetail() {
       <div className="card" style={{ padding: '2rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
           <div>
-            <h3 style={{ margin: 0 }}>⭐ Reseñas y Calificaciones de Clientes</h3>
+            <h3 style={{ margin: 0 }}>Reseñas y Calificaciones de Clientes</h3>
             <p style={{ margin: '0.25rem 0 0 0', fontSize: '13px', color: 'var(--text-muted)' }}>
               Validación automática de "Comprador Verificado" contra el historial de órdenes (:8084).
             </p>
           </div>
           <div style={{ textAlign: 'right' }}>
-            <span style={{ fontSize: '1.6rem', fontWeight: '700', color: '#d97706' }}>
-              ★ {reviewsData.average_rating || '0.0'} / 5
+            <span style={{ fontSize: '1.5rem', fontWeight: '600', color: '#0a0a0a' }}>
+              {reviewsData.average_rating || '0.0'} / 5
             </span>
             <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)' }}>
               {reviewsData.total_reviews} calificación(es)
@@ -349,17 +349,17 @@ export default function ProductDetail() {
           <div>
             {reviewsData.reviews && reviewsData.reviews.length > 0 ? (
               reviewsData.reviews.map((rev) => (
-                <div key={rev.id} style={{ padding: '1rem', border: '1px solid var(--border-color)', borderRadius: '8px', marginBottom: '1rem', backgroundColor: '#f9fafb' }}>
+                <div key={rev.id} style={{ padding: '1rem', border: '1px solid var(--border-color)', borderRadius: '6px', marginBottom: '1rem', backgroundColor: '#fafafa' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
-                    <span style={{ color: '#d97706', fontWeight: '700' }}>
-                      {'★'.repeat(rev.rating)}{'☆'.repeat(5 - rev.rating)}
+                    <span style={{ color: '#0a0a0a', fontWeight: '600', fontSize: '12.5px' }}>
+                      Calificación: {rev.rating} / 5
                     </span>
                     {rev.is_verified_buyer ? (
-                      <span className="badge success" style={{ margin: 0, fontSize: '11px' }}>
-                        ✅ Comprador Verificado
+                      <span className="badge success" style={{ margin: 0, fontSize: '10px' }}>
+                        Comprador Verificado
                       </span>
                     ) : (
-                      <span className="badge" style={{ margin: 0, fontSize: '11px' }}>
+                      <span className="badge" style={{ margin: 0, fontSize: '10px' }}>
                         Usuario #{rev.user_id}
                       </span>
                     )}

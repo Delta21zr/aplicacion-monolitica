@@ -109,7 +109,7 @@ export default function Login() {
       }
 
       setIsError(false);
-      setMessage(`✅ Autenticado en Hotel Paraíso como ${hotelUser.nombre} (${ssoRes.data.origen_servicio}). Redirigiendo...`);
+      setMessage(`Autenticado en Hotel Paraíso como ${hotelUser.nombre} (${ssoRes.data.origen_servicio}). Redirigiendo...`);
       setTimeout(() => {
         navigate('/profile');
         window.location.reload();
@@ -157,9 +157,9 @@ export default function Login() {
       </form>
 
       {/* Integración SOA Microservicio 1: Usuarios Hotel Paraíso (Salvador) */}
-      <div style={{ marginTop: '1.5rem', paddingTop: '1.25rem', borderTop: '1px dashed var(--border-color)' }}>
-        <div style={{ fontSize: '12px', fontWeight: '700', color: '#1e40af', textAlign: 'center', marginBottom: '0.6rem' }}>
-          🏨 INTEGRACIÓN SOA — MICROSERVICIO DE USUARIOS (HOTEL PARAÍSO)
+      <div style={{ marginTop: '1.5rem', paddingTop: '1.25rem', borderTop: '1px solid var(--border-color)' }}>
+        <div style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-muted)', textAlign: 'center', marginBottom: '0.6rem', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+          Integración SOA — Microservicio de Usuarios (Hotel Paraíso)
         </div>
         <button
           type="button"
@@ -167,13 +167,14 @@ export default function Login() {
           onClick={() => handleHotelSSOLogin()}
           style={{
             width: '100%',
-            backgroundColor: '#1e40af',
-            color: '#fff',
-            fontWeight: '600',
+            backgroundColor: '#fafafa',
+            color: '#0a0a0a',
+            border: '1px solid #d4d4d4',
+            fontWeight: '500',
             marginBottom: '0.5rem',
           }}
         >
-          {ssoLoading ? 'Validando en GraphQL de Hotel Paraíso...' : '🔑 Iniciar Sesión con Cuenta Hotel Paraíso (SSO)'}
+          {ssoLoading ? 'Validando en GraphQL de Hotel Paraíso...' : 'Iniciar Sesión con Cuenta Hotel Paraíso (SSO)'}
         </button>
         <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'center', flexWrap: 'wrap' }}>
           <button

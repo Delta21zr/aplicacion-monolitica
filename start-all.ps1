@@ -1,4 +1,4 @@
-# Script para iniciar todos los microservicios y el frontend
+﻿# Script para iniciar todos los microservicios y el frontend
 param (
     [switch]$NoFrontend
 )
@@ -16,6 +16,8 @@ Write-Host " - Cart Service        -> http://localhost:8083" -ForegroundColor Ma
 Write-Host " - Order Service       -> http://localhost:8084" -ForegroundColor Blue
 Write-Host " - Shipping Service    -> http://localhost:8085" -ForegroundColor Red
 Write-Host " - Interaction Service -> http://localhost:8086" -ForegroundColor Cyan
+Write-Host " - Billing Service     -> http://localhost:8087 (Profact CFDI 4.0)" -ForegroundColor Yellow
+Write-Host " - Monitoring Service  -> http://localhost:8088 (Health & RabbitMQ)" -ForegroundColor Cyan
 if (-not $NoFrontend) {
     Write-Host " - Frontend (React)    -> http://localhost:5173" -ForegroundColor Green
 }

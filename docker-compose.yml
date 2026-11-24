@@ -35,7 +35,22 @@ services:
     volumes:
       - redis_data:/data
 
+  # Broker de Mensajería (RabbitMQ para Telemetría y Health Status)
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: monolito-rabbitmq
+    restart: always
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
 volumes:
   postgres_data:
   mongo_data:
   redis_data:
+  rabbitmq_data:
